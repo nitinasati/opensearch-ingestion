@@ -2,11 +2,25 @@
 
 This system provides a comprehensive solution for managing OpenSearch indices, including data ingestion, reindexing, and cleanup operations. It supports bulk data ingestion from S3 CSV files with validation and error handling.
 
+## System Characteristics
+
+### Load Type
+- This system is designed for **full load** operations only
+- It does not support delta/incremental loads
+- Each ingestion operation completely refreshes the target index with new data
+- The system follows a zero-downtime strategy to ensure data consistency during full refreshes
+
+### Limitations
+- No support for partial updates or incremental data ingestion
+- Each ingestion requires processing the entire dataset from S3
+- Historical data changes are not tracked or preserved
+- Previous versions of records are overwritten during ingestion
+
 ## AWS Parameter Store Integration
 
 The system uses AWS Parameter Store to securely store and retrieve OpenSearch credentials. This provides better security and centralized credential management.
 
-### Required AWS Parameter Store Parameters
+### Required AWS Parameter Store Parameters in the environment file
 ```
 /opensearch/endpoint    # OpenSearch cluster endpoint URL
 /opensearch/username    # OpenSearch username
@@ -14,7 +28,7 @@ The system uses AWS Parameter Store to securely store and retrieve OpenSearch cr
 ```
 
 ### AWS IAM Requirements
-- The system requires AWS IAM permissions to access Parameter Store:
+- The system requires AWS IAM permissions to access Parameter Store and S3:
   ```json
   {
       "Version": "2012-10-17",
@@ -28,6 +42,17 @@ The system uses AWS Parameter Store to securely store and retrieve OpenSearch cr
               "Resource": [
                   "arn:aws:ssm:*:*:parameter/opensearch/*"
               ]
+          },
+          {
+              "Effect": "Allow",
+              "Action": [
+                  "s3:GetObject",
+                  "s3:ListBucket"
+              ],
+              "Resource": [
+                  "arn:aws:s3:::your-bucket-name",
+                  "arn:aws:s3:::your-bucket-name/*"
+              ]
           }
       ]
   }
@@ -36,8 +61,11 @@ The system uses AWS Parameter Store to securely store and retrieve OpenSearch cr
 ### Environment Variables
 Required environment variables in `.env` file:
 ```
-AWS_REGION=<your-aws-region>
-DOCUMENT_COUNT_THRESHOLD=10  # Optional, defaults to 10%
+OPENSEARCH_ENDPOINT=<<aws parameter name for endpoint>>
+OPENSEARCH_USERNAME=<<aws parameter name for endpoint>>
+OPENSEARCH_PASSWORD=<<aws parameter name for endpoint>>
+AWS_REGION=<<aws-region>>
+DOCUMENT_COUNT_THRESHOLD=<<threshold value in percentage>>  # Percentage difference threshold for alias switch operation to avoid alias switch when document count is 0 in target index
 ```
 
 ## Job Execution Order
@@ -49,6 +77,7 @@ The system follows a zero-downtime data refresh strategy with the following step
 python reindex.py --source my_index_primary --target my_index_secondary
 ```
 This step creates a copy of the primary index in the secondary index, preparing it for the data refresh process.
+
 
 ### Step 2: Switch Alias to Secondary Index
 ```bash
@@ -83,12 +112,29 @@ This step switches the alias back to the primary index, making the fresh data av
 - Verifies document counts
 - Handles authentication and SSL
 - Provides detailed operation results
+- Safety Guardrails:
+  - Validates existence of both source and target indices before operation
+  - Checks if target index is serving live traffic (part of an alias) before cleanup
+  - Prevents accidental deletion of production indices
+  - Verifies document count consistency between source and target
+  - Validates index health status before starting reindex
+  - Provides rollback capability in case of failures
+  - Logs all validation steps for audit trail
 
 ### 2. Alias Management (`switch_alias.py`)
 - Switches aliases between indices
 - Validates document count differences
 - Configurable threshold for document count differences
 - Safe alias switching with validation
+- Safety Guardrails:
+  - Prevents alias switch if target index has zero records to avoid empty search results
+  - Validates record count difference using configurable threshold from environment variable
+  - Calculates percentage difference between source and target indices
+  - Aborts alias switch if record count difference exceeds threshold
+  - Provides detailed logging of record count validation
+  - Ensures data consistency before and after alias switch
+  - Validates index health status before alias operations
+  - Maintains audit trail of all validation checks
 
 ### 3. Bulk Data Ingestion (`bulkupdate.py`)
 - Processes CSV files from S3 buckets
@@ -97,13 +143,39 @@ This step switches the alias back to the primary index, making the fresh data av
 - Validates document counts
 - Provides detailed progress logging
 - Handles various data types (numeric, boolean, text)
+- Safety Guardrails:
+  - Validates if target index exists before ingestion
+  - Aborts operation if target index is serving live traffic (part of an alias, prevents accidental ingestion into production indices
+  - Validates index health status before starting ingestion
+  - Performs force merge after ingestion to remove deleted records permanently
+  - Ensures efficient disk space utilization
+  - Validates CSV file format and content before processing
+  - Provides detailed validation logging for audit trail
+  - Implements retry mechanism for failed batch operations
 
 ### 4. Index Management (`index_cleanup.py`)
+- Provides common index cleanup functionality used by other jobs
 - Validates index existence
 - Checks for index aliases
 - Safely deletes documents while preserving index structure
 - Performs force merge to remove deleted documents
 - Comprehensive logging of operations
+- Safety Guardrails:
+  - Validates if target index exists before cleanup
+  - Aborts operation if index is serving live traffic (part of an alias)
+  - Prevents accidental cleanup of production indices
+  - Validates index health status before cleanup
+  - Performs force merge to permanently remove deleted records
+  - Optimizes disk space by removing soft-deleted documents
+  - Validates index settings and mappings before operations
+  - Provides detailed validation logging for audit trail
+  - Implements rollback capability in case of failures
+  - Ensures index structure integrity during cleanup
+- Used by:
+  - Bulk Data Ingestion for pre-ingestion cleanup
+  - Reindexing for target index preparation
+  - Alias Management for index validation
+  - Provides consistent cleanup behavior across all operations
 
 ### 5. Base Manager (`opensearch_base_manager.py`)
 - Provides common functionality for all OpenSearch operations
