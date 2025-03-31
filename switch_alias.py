@@ -116,8 +116,10 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
         try:
             source_count = self._get_index_count(source_index)
             target_count = self._get_index_count(target_index)
-            
-            if target_count == 0:
+            percentage_diff = 0
+            # Get threshold from environment variable, default to 10%
+            threshold = float(os.getenv('DOCUMENT_COUNT_THRESHOLD', '10'))
+            if target_count == 0 and source_count > 0:
                 error_msg = "Target index is empty, can't switch alias"
                 logger.error(error_msg)
                 return {
@@ -126,30 +128,29 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
                 }
             
             # Calculate percentage difference
-            max_diff = max(source_count, target_count)
-            min_diff = min(source_count, target_count)
-            percentage_diff = ((max_diff - min_diff) / max_diff) * 100
+            if target_count != source_count:
+                max_diff = max(source_count, target_count)
+                min_diff = min(source_count, target_count)
+                percentage_diff = ((max_diff - min_diff) / max_diff) * 100
+                
+                logger.info(f"Document count threshold: {threshold}%")
+                
+                logger.info(f"Source index count: {source_count}")
+                logger.info(f"Target index count: {target_count}")
+                logger.info(f"Document count difference: {percentage_diff:.2f}%")
+                logger.info(f"Threshold: {threshold}%")
             
-            # Get threshold from environment variable, default to 10%
-            threshold = float(os.getenv('DOCUMENT_COUNT_THRESHOLD', '10'))
-            logger.info(f"Document count threshold: {threshold}%")
-            
-            logger.info(f"Source index count: {source_count}")
-            logger.info(f"Target index count: {target_count}")
-            logger.info(f"Document count difference: {percentage_diff:.2f}%")
-            logger.info(f"Threshold: {threshold}%")
-            
-            if percentage_diff > threshold:
-                error_msg = f"Document count difference ({percentage_diff:.2f}%) exceeds {threshold}% threshold"
-                logger.error(error_msg)
-                return {
-                    "status": "error",
-                    "message": error_msg,
-                    "source_count": source_count,
-                    "target_count": target_count,
-                    "percentage_diff": percentage_diff,
-                    "threshold": threshold
-                }
+                if percentage_diff > threshold:
+                    error_msg = f"Document count difference ({percentage_diff:.2f}%) exceeds {threshold}% threshold"
+                    logger.error(error_msg)
+                    return {
+                        "status": "error",
+                        "message": error_msg,
+                        "source_count": source_count,
+                        "target_count": target_count,
+                        "percentage_diff": percentage_diff,
+                        "threshold": threshold
+                    }
             
             success_msg = "Document count validation passed"
             logger.info(success_msg)

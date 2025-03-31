@@ -70,12 +70,12 @@ class OpenSearchReindexManager(OpenSearchBaseManager):
                 }
             
             # Get source index count
-            source_count = self._get_index_count(source_index)
-            if source_count == 0:
-                return {
-                    "status": "error",
-                    "message": f"Source index {source_index} has no documents"
-                }
+            # source_count = self._get_index_count(source_index)
+            # if source_count == 0:
+            #     return {
+            #         "status": "error",
+            #         "message": f"Source index {source_index} has no documents"
+            #     }
             
             # Clean up target index if it exists
        

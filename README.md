@@ -114,8 +114,7 @@ This step switches the alias back to the primary index, making the fresh data av
 - Provides detailed operation results
 - Safety Guardrails:
   - Validates existence of both source and target indices before operation
-  - Checks if target index is serving live traffic (part of an alias) before cleanup
-  - Prevents accidental deletion of production indices
+  - Aborts operation if index is serving live traffic (part of an alias)
   - Verifies document count consistency between source and target
   - Validates index health status before starting reindex
   - Provides rollback capability in case of failures
