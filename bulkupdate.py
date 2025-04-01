@@ -6,7 +6,7 @@ It handles the process of reading CSV files, transforming data, and performing
 bulk ingestion operations with validation and error handling.
 
 Key features:
-- S3 CSV file processing
+- S3 CSV file processing using pandas
 - Batch processing for efficient ingestion
 - Document count validation
 - Error handling and recovery
@@ -14,9 +14,8 @@ Key features:
 """
 
 import boto3
-import csv
+import pandas as pd
 import json
-import base64
 import requests
 import logging
 from typing import List, Dict, Any, Optional
@@ -26,7 +25,6 @@ import os
 from dotenv import load_dotenv
 import argparse
 from index_cleanup import OpenSearchIndexManager
-from datetime import datetime
 import urllib3
 from opensearch_base_manager import OpenSearchBaseManager
 
@@ -72,37 +70,6 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
         self.index_manager = OpenSearchIndexManager()
         logger.info(f"Initialized OpenSearchBulkIngestion with batch_size: {batch_size}")
 
-    def _parse_csv_line(self, line: str) -> List[str]:
-        """
-        Parse CSV line handling quoted values.
-        
-        Args:
-            line (str): CSV line to parse
-            
-        Returns:
-            List[str]: List of parsed values
-        """
-        values = []
-        current_value = []
-        in_quotes = False
-        
-        for i, char in enumerate(line):
-            if char == '"':
-                if in_quotes and i + 1 < len(line) and line[i + 1] == '"':
-                    # Handle escaped quotes
-                    current_value.append('"')
-                    i += 1
-                else:
-                    in_quotes = not in_quotes
-            elif char == ',' and not in_quotes:
-                values.append(''.join(current_value))
-                current_value = []
-            else:
-                current_value.append(char)
-        
-        values.append(''.join(current_value))
-        return values
-
     def _create_bulk_request(self, documents: List[Dict[str, Any]], index_name: str) -> str:
         """
         Create bulk request body in NDJSON format.
@@ -116,15 +83,12 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
         """
         bulk_request = []
         for doc in documents:
-            # Add index action
             bulk_request.append(json.dumps({
                 "index": {
                     "_index": index_name
                 }
             }))
-            # Add document
             bulk_request.append(json.dumps(doc))
-        # Join with newlines and add final newline
         return '\n'.join(bulk_request) + '\n'
 
     def _process_batch(self, batch: List[Dict[str, Any]], index_name: str, file_key: str) -> bool:
@@ -169,34 +133,34 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             logger.error(f"Error processing batch from {file_key}: {str(e)}")
             return False
 
-    def _create_document(self, headers: List[str], values: List[str]) -> Dict[str, Any]:
+    def _create_document(self, row: pd.Series) -> Dict[str, Any]:
         """
-        Create a document from CSV headers and values.
+        Create a document from CSV row.
         
         Args:
-            headers (List[str]): List of CSV headers
-            values (List[str]): List of CSV values
+            row (pd.Series): CSV row to convert to a document
             
         Returns:
             Dict[str, Any]: Document ready for indexing
         """
         document = {}
-        for header, value in zip(headers, values):
-            # Clean up header and value
-            header = header.strip()
-            value = value.strip()
+        for column in row.index:
+            value = row[column]
             
             # Handle empty values
-            if value == '':
+            if pd.isna(value):
                 value = None
             # Handle numeric values
-            elif value.replace('.', '').isdigit():
+            elif pd.api.types.is_numeric_dtype(type(value)):
                 value = float(value)
             # Handle boolean values
-            elif value.lower() in ('true', 'false'):
-                value = value.lower() == 'true'
+            elif isinstance(value, bool):
+                value = value
+            # Handle string values
+            else:
+                value = str(value).strip()
             
-            document[header] = value
+            document[column] = value
         
         return document
 
@@ -263,21 +227,19 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             response = self.s3_client.get_object(Bucket=bucket, Key=key)
             content = response['Body'].read().decode('utf-8')
             
-            csv_file = StringIO(content)
-            reader = csv.reader(csv_file)
-            headers = [h.strip() for h in next(reader)]
-            logger.info(f"Found {len(headers)} headers in file: {key}")
+            # Read CSV using pandas
+            df = pd.read_csv(StringIO(content))
+            logger.info(f"Found {len(df.columns)} columns in file: {key}")
             
             batch = []
             row_count = 0
             batch_count = 0
             batch_start_time = time.time()
             
-            for row in reader:
+            for _, row in df.iterrows():
                 row_count += 1
                 try:
-                    values = self._parse_csv_line(','.join(row))
-                    document = self._create_document(headers, values)
+                    document = self._create_document(row)
                     batch.append(document)
                     
                     if len(batch) >= self.batch_size:
