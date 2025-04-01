@@ -1,6 +1,101 @@
 # OpenSearch Ingestion System
 
-This system provides a comprehensive solution for managing OpenSearch indices, including data ingestion, reindexing, and cleanup operations. It supports bulk data ingestion from S3 CSV files with validation and error handling.
+A Python-based system for ingesting data from S3 CSV files into OpenSearch with support for parallel processing.
+
+## Features
+
+- Efficient CSV file processing using pandas
+- Parallel processing with configurable number of threads
+- Batch processing for optimal performance
+- Document count validation
+- Comprehensive error handling and logging
+- AWS S3 integration
+- OpenSearch bulk ingestion
+
+## Prerequisites
+
+- Python 3.8+
+- AWS credentials configured
+- OpenSearch cluster access
+- Required Python packages (install using `pip install -r requirements.txt`)
+
+## Configuration
+
+1. Create a `.env` file in the project root with the following variables:
+```
+OPENSEARCH_ENDPOINT=your_opensearch_endpoint
+OPENSEARCH_USERNAME=your_username
+OPENSEARCH_PASSWORD=your_password
+AWS_REGION=your_aws_region
+```
+
+## Usage
+
+### Bulk Update Script
+
+The `bulkupdate.py` script processes CSV files from S3 and ingests them into OpenSearch with parallel processing support.
+
+```bash
+python bulkupdate.py --bucket <bucket_name> --prefix <prefix> --index <index_name> [options]
+```
+
+#### Required Arguments:
+- `--bucket`: S3 bucket name containing CSV files
+- `--prefix`: S3 prefix to filter files
+- `--index`: OpenSearch index name for ingestion
+
+#### Optional Arguments:
+- `--batch-size`: Number of documents to process in each batch (default: 10000)
+- `--max-workers`: Maximum number of parallel threads for processing (default: 4)
+
+#### Example:
+```bash
+python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index my_index_primary --batch-size 1000 --max-workers 8
+```
+
+### Parallel Processing
+
+The system now supports parallel processing of CSV files with the following features:
+- Configurable number of worker threads
+- Thread-safe document counting
+- Queue-based batch processing
+- Graceful worker shutdown
+- Error handling for worker threads
+
+The number of threads can be adjusted based on your system's capabilities and requirements. A higher number of threads may improve performance but will also increase memory usage and network connections.
+
+## Performance Considerations
+
+- Adjust `batch-size` based on your document size and memory constraints
+- Tune `max-workers` based on your system's CPU cores and network capacity
+- Monitor memory usage when processing large files
+- Consider network bandwidth when increasing parallel processing
+
+## Error Handling
+
+The system includes comprehensive error handling for:
+- S3 access issues
+- OpenSearch connection problems
+- CSV parsing errors
+- Document validation failures
+- Worker thread exceptions
+
+## Logging
+
+Detailed logging is provided for:
+- Processing progress
+- Error messages
+- Performance metrics
+- Document counts
+- Worker thread status
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## System Characteristics
 
