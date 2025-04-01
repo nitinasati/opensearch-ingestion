@@ -11,6 +11,7 @@ Key features:
 - Document count validation
 - Error handling and recovery
 - Comprehensive logging
+- Parallel processing with configurable threads
 """
 
 import boto3
@@ -27,6 +28,9 @@ import argparse
 from index_cleanup import OpenSearchIndexManager
 import urllib3
 from opensearch_base_manager import OpenSearchBaseManager
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from queue import Queue
+import threading
 
 # Load environment variables
 load_dotenv()
@@ -49,11 +53,12 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
         batch_size (int): Number of documents to process in each batch
         s3_client (boto3.client): AWS S3 client
         index_manager (OpenSearchIndexManager): Manager for index operations
+        max_workers (int): Maximum number of parallel threads for processing
     """
     
     def __init__(self, batch_size: int = 10000, opensearch_endpoint: Optional[str] = None, 
                  username: Optional[str] = None, password: Optional[str] = None,
-                 verify_ssl: bool = False):
+                 verify_ssl: bool = False, max_workers: int = 4):
         """
         Initialize the bulk ingestion manager.
         
@@ -63,12 +68,17 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             username (str, optional): OpenSearch username
             password (str, optional): OpenSearch password
             verify_ssl (bool): Whether to verify SSL certificates
+            max_workers (int): Maximum number of parallel threads for processing
         """
         super().__init__(opensearch_endpoint, username, password, verify_ssl)
         self.batch_size = batch_size
         self.s3_client = boto3.client('s3')
         self.index_manager = OpenSearchIndexManager()
-        logger.info(f"Initialized OpenSearchBulkIngestion with batch_size: {batch_size}")
+        self.max_workers = max_workers
+        self._batch_queue = Queue()
+        self._processed_count = 0
+        self._lock = threading.Lock()
+        logger.info(f"Initialized OpenSearchBulkIngestion with batch_size: {batch_size}, max_workers: {max_workers}")
 
     def _create_bulk_request(self, documents: List[Dict[str, Any]], index_name: str) -> str:
         """
@@ -127,11 +137,34 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                 logger.error(f"Errors in batch from {file_key}: {json.dumps(result, indent=2)}")
                 return False
             
+            with self._lock:
+                self._processed_count += len(batch)
+            
             return True
             
         except Exception as e:
             logger.error(f"Error processing batch from {file_key}: {str(e)}")
             return False
+
+    def _process_batch_worker(self, index_name: str, file_key: str) -> None:
+        """
+        Worker function to process batches from the queue.
+        
+        Args:
+            index_name (str): Name of the target index
+            file_key (str): S3 file key being processed
+        """
+        while True:
+            try:
+                batch = self._batch_queue.get_nowait()
+                if batch is None:  # Poison pill to stop the worker
+                    break
+                
+                self._process_batch(batch, index_name, file_key)
+                self._batch_queue.task_done()
+                
+            except Queue.Empty:
+                break
 
     def _create_document(self, row: pd.Series) -> Dict[str, Any]:
         """
@@ -233,38 +266,51 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             
             batch = []
             row_count = 0
-            batch_count = 0
-            batch_start_time = time.time()
             
-            for _, row in df.iterrows():
-                row_count += 1
-                try:
-                    document = self._create_document(row)
-                    batch.append(document)
-                    
-                    if len(batch) >= self.batch_size:
-                        batch_count += 1
-                        if not self._process_batch(batch, index_name, key):
-                            logger.error(f"Failed to process batch {batch_count} in file {key}")
-                        batch_time = time.time() - batch_start_time
-                        logger.info(f"Batch {batch_count} processed in {batch_time:.2f} seconds")
-                        batch = []
-                        batch_start_time = time.time()
+            # Reset processed count
+            self._processed_count = 0
+            
+            # Create thread pool for batch processing
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                futures = []
+                
+                for _, row in df.iterrows():
+                    row_count += 1
+                    try:
+                        document = self._create_document(row)
+                        batch.append(document)
                         
-                except Exception as e:
-                    logger.error(f"Error processing row {row_count} in file {key}: {str(e)}")
-            
-            # Process remaining documents
-            if batch:
-                batch_count += 1
-                if not self._process_batch(batch, index_name, key):
-                    logger.error(f"Failed to process final batch {batch_count} in file {key}")
-                batch_time = time.time() - batch_start_time
-                logger.info(f"Final batch {batch_count} processed in {batch_time:.2f} seconds")
+                        if len(batch) >= self.batch_size:
+                            self._batch_queue.put(batch.copy())
+                            batch = []
+                            
+                    except Exception as e:
+                        logger.error(f"Error processing row {row_count} in file {key}: {str(e)}")
+                
+                # Process remaining documents
+                if batch:
+                    self._batch_queue.put(batch)
+                
+                # Add poison pills to stop workers
+                for _ in range(self.max_workers):
+                    self._batch_queue.put(None)
+                
+                # Start worker threads
+                for _ in range(self.max_workers):
+                    futures.append(
+                        executor.submit(self._process_batch_worker, index_name, key)
+                    )
+                
+                # Wait for all workers to complete
+                for future in as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception as e:
+                        logger.error(f"Worker thread error: {str(e)}")
             
             file_time = time.time() - file_start_time
             logger.info(f"Completed processing file {key} in {file_time:.2f} seconds")
-            return row_count
+            return self._processed_count
             
         except Exception as e:
             logger.error(f"Error processing file {key}: {str(e)}")
@@ -372,13 +418,17 @@ def main():
     parser.add_argument('--prefix', required=True, help='S3 prefix')
     parser.add_argument('--index', required=True, help='OpenSearch index name')
     parser.add_argument('--batch-size', type=int, default=10000, help='Number of documents to process in each batch (default: 10000)')
+    parser.add_argument('--max-workers', type=int, default=4, help='Maximum number of parallel threads (default: 4)')
     args = parser.parse_args()
     
     logger.info(f"Starting bulk ingestion script with bucket: {args.bucket}, prefix: {args.prefix}, index: {args.index}")
     
     try:
-        # Initialize ingestion service with batch size - credentials will be handled by OpenSearchBaseManager
-        ingestion_service = OpenSearchBulkIngestion(batch_size=args.batch_size)
+        # Initialize ingestion service with batch size and max workers
+        ingestion_service = OpenSearchBulkIngestion(
+            batch_size=args.batch_size,
+            max_workers=args.max_workers
+        )
         
         # Start ingestion with command line arguments
         result = ingestion_service.ingest_data(args.bucket, args.prefix, args.index)
@@ -409,5 +459,5 @@ if __name__ == "__main__":
     main()
 
 # Example usage:
-# python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index my_index_primary --batch-size 1000
+# python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index my_index_primary --batch-size 1000 --max-workers 8
 
