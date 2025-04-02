@@ -64,12 +64,122 @@ The system now supports parallel processing of CSV files with the following feat
 
 The number of threads can be adjusted based on your system's capabilities and requirements. A higher number of threads may improve performance but will also increase memory usage and network connections.
 
-## Performance Considerations
+## Performance Configuration Guide
 
-- Adjust `batch-size` based on your document size and memory constraints
-- Tune `max-workers` based on your system's CPU cores and network capacity
-- Monitor memory usage when processing large files
-- Consider network bandwidth when increasing parallel processing
+### Batch Size Selection
+
+The batch size significantly impacts both performance and resource usage. Consider the following factors when selecting a batch size:
+
+1. **Document Size**:
+   - Larger documents require smaller batch sizes
+   - Smaller documents can use larger batch sizes
+   - Monitor the size of your bulk requests (should not exceed OpenSearch's limits)
+
+2. **OpenSearch Cluster Capacity**:
+   - Consider your cluster's memory and CPU resources
+   - Monitor OpenSearch's bulk queue size
+   - Watch for rejected execution exceptions
+
+3. **Testing Recommendations**:
+   - Start with a conservative batch size (e.g., 1000)
+   - Gradually increase while monitoring:
+     - Memory usage
+     - CPU utilization
+     - Network bandwidth
+     - OpenSearch cluster health
+   - Stop increasing when you see:
+     - Rejected execution exceptions
+     - High memory usage
+     - Cluster health degradation
+
+### Max Workers Configuration
+
+The number of parallel workers affects both throughput and resource consumption. Consider these factors:
+
+1. **Server Resources**:
+   - CPU cores available
+   - Available memory
+   - Network bandwidth
+   - Disk I/O capacity
+
+2. **OpenSearch Cluster Capacity**:
+   - Number of nodes
+   - Available memory per node
+   - Network capacity
+   - Bulk queue size
+
+3. **Testing Process**:
+   - Start with 2-4 workers
+   - Monitor:
+     - Server CPU usage
+     - Memory consumption
+     - Network bandwidth
+     - OpenSearch cluster health
+   - Increase gradually until you find the optimal balance
+   - Stop when you see:
+     - Server resource constraints
+     - Network bottlenecks
+     - OpenSearch cluster stress
+
+### Performance Testing Checklist
+
+Before running in production, perform rigorous testing:
+
+1. **Resource Monitoring**:
+   - Server CPU usage
+   - Memory consumption
+   - Network bandwidth
+   - Disk I/O
+   - OpenSearch cluster health
+
+2. **Error Monitoring**:
+   - Rejected execution exceptions
+   - Rate limiting
+   - Network timeouts
+   - Memory pressure
+
+3. **Performance Metrics**:
+   - Documents processed per second
+   - Batch processing time
+   - Total ingestion time
+   - Resource utilization
+
+4. **Load Testing**:
+   - Test with different file sizes
+   - Test with varying document sizes
+   - Test with different worker counts
+   - Test with different batch sizes
+
+### Recommended Starting Points
+
+1. **For Small Documents (< 1KB)**:
+   - Batch size: 5000-10000
+   - Max workers: 4-8
+   - Monitor and adjust based on cluster capacity
+
+2. **For Medium Documents (1KB-10KB)**:
+   - Batch size: 1000-5000
+   - Max workers: 2-4
+   - Adjust based on document size and cluster capacity
+
+3. **For Large Documents (> 10KB)**:
+   - Batch size: 100-1000
+   - Max workers: 1-2
+   - Monitor bulk request size carefully
+
+### Environment Variables
+
+Configure these in your `.env` file:
+
+```
+OPENSEARCH_ENDPOINT=/opensearch/endpoint
+OPENSEARCH_USERNAME=/opensearch/username
+OPENSEARCH_PASSWORD=/opensearch/password
+AWS_REGION=us-east-1
+INDEX_RECREATE_THRESHOLD=1000000  # Threshold for recreating index
+LOG_LEVEL=INFO
+LOG_FORMAT='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+```
 
 ## Error Handling
 
