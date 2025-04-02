@@ -21,12 +21,51 @@ A Python-based system for ingesting data from S3 CSV files into OpenSearch with 
 
 ## Configuration
 
+### Authentication Options
+
+#### 1. OpenSearch Backend Role (Recommended)
+The system supports OpenSearch backend role authentication using AWS IAM roles. This is the recommended approach for production environments.
+
+1. Configure your OpenSearch domain to use IAM authentication
+2. Set up an IAM role with appropriate permissions
+3. Configure the following in your `.env` file:
+```
+OPENSEARCH_ENDPOINT=your_opensearch_endpoint
+AWS_REGION=your_aws_region
+USE_BACKEND_ROLE=true
+```
+
+Required IAM permissions:
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "es:ESHttp*",
+                "es:DescribeDomain",
+                "es:DescribeDomains",
+                "es:DescribeDomainConfig",
+                "es:ESHttp*",
+                "es:UpdateDomainConfig"
+            ],
+            "Resource": "arn:aws:es:region:account:domain/domain-name"
+        }
+    ]
+}
+```
+
+#### 2. Basic Authentication (Legacy)
+For development or testing environments, you can use basic authentication:
+
 1. Create a `.env` file in the project root with the following variables:
 ```
 OPENSEARCH_ENDPOINT=your_opensearch_endpoint
 OPENSEARCH_USERNAME=your_username
 OPENSEARCH_PASSWORD=your_password
 AWS_REGION=your_aws_region
+USE_BACKEND_ROLE=false
 ```
 
 ## Usage
@@ -221,56 +260,75 @@ Detailed logging is provided for:
 - Historical data changes are not tracked or preserved
 - Previous versions of records are overwritten during ingestion
 
-## AWS Parameter Store Integration
-
-The system uses AWS Parameter Store to securely store and retrieve OpenSearch credentials. This provides better security and centralized credential management.
-
-### Required AWS Parameter Store Parameters in the environment file
-```
-/opensearch/endpoint    # OpenSearch cluster endpoint URL
-/opensearch/username    # OpenSearch username
-/opensearch/password    # OpenSearch password
-```
-
 ### AWS IAM Requirements
-- The system requires AWS IAM permissions to access Parameter Store and S3:
-  ```json
-  {
-      "Version": "2012-10-17",
-      "Statement": [
-          {
-              "Effect": "Allow",
-              "Action": [
-                  "ssm:GetParameter",
-                  "ssm:GetParameters"
-              ],
-              "Resource": [
-                  "arn:aws:ssm:*:*:parameter/opensearch/*"
-              ]
-          },
-          {
-              "Effect": "Allow",
-              "Action": [
-                  "s3:GetObject",
-                  "s3:ListBucket"
-              ],
-              "Resource": [
-                  "arn:aws:s3:::your-bucket-name",
-                  "arn:aws:s3:::your-bucket-name/*"
-              ]
-          }
-      ]
-  }
+
+The tool requires an IAM role with the following permissions:
+
+1. **OpenSearch Permissions**:
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "es:ESHttp*"
+            ],
+            "Resource": [
+                "arn:aws:es:region:account:domain/domain-name/*"
+            ]
+        }
+    ]
+}
+```
+
+2. **S3 Permissions** (for bulk ingestion):
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetObject",
+                "s3:ListBucket"
+            ],
+            "Resource": [
+                "arn:aws:s3:::your-bucket-name",
+                "arn:aws:s3:::your-bucket-name/*"
+            ]
+        }
+    ]
+}
+```
   ```
 
 ### Environment Variables
 Required environment variables in `.env` file:
 ```
-OPENSEARCH_ENDPOINT=<<aws parameter name for endpoint>>
-OPENSEARCH_USERNAME=<<aws parameter name for endpoint>>
-OPENSEARCH_PASSWORD=<<aws parameter name for endpoint>>
-AWS_REGION=<<aws-region>>
-DOCUMENT_COUNT_THRESHOLD=<<threshold value in percentage>>  # Percentage difference threshold for alias switch operation to avoid alias switch when document count is 0 in target index
+# OpenSearch Configuration
+OPENSEARCH_ENDPOINT=<opensearch endpoint>
+AWS_REGION=<aws-region>
+
+# AWS IAM Role Configuration
+AWS_PROFILE=default  # Optional: specify AWS profile if using multiple profiles
+AWS_ROLE_ARN=<role-arn>  # Optional: specify role ARN if using role assumption
+
+# Performance Configuration
+BATCH_SIZE=10000
+MAX_WORKERS=4
+INDEX_RECREATE_THRESHOLD=1000000
+
+# Logging Configuration
+LOG_LEVEL=INFO
+LOG_FORMAT=%(asctime)s - %(name)s - %(levelname)s - %(message)s
+
+# SSL Configuration
+VERIFY_SSL=false  # Set to true in production
+
+# Optional environment variables
+DOCUMENT_COUNT_THRESHOLD=100  # Percentage difference threshold for alias switch operation to avoid alias switch when document count is 0 in target index
+
 ```
 
 ## Job Execution Order

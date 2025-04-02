@@ -45,19 +45,15 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
     """
     
     def __init__(self, opensearch_endpoint: Optional[str] = None, 
-                 username: Optional[str] = None, 
-                 password: Optional[str] = None,
                  verify_ssl: bool = False):
         """
         Initialize the alias manager.
         
         Args:
             opensearch_endpoint (str, optional): The OpenSearch cluster endpoint URL
-            username (str, optional): OpenSearch username
-            password (str, optional): OpenSearch password
             verify_ssl (bool): Whether to verify SSL certificates
         """
-        super().__init__(opensearch_endpoint, username, password, verify_ssl)
+        super().__init__(opensearch_endpoint, verify_ssl)
         logger.info(f"Initialized OpenSearchAliasManager with endpoint: {self.opensearch_endpoint}")
 
     def _get_alias_info(self, alias_name: str) -> dict:

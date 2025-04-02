@@ -34,19 +34,15 @@ class OpenSearchReindexManager(OpenSearchBaseManager):
     """
     
     def __init__(self, opensearch_endpoint: Optional[str] = None, 
-                 username: Optional[str] = None, 
-                 password: Optional[str] = None,
                  verify_ssl: bool = False):
         """
         Initialize the reindex manager.
         
         Args:
             opensearch_endpoint (str, optional): The OpenSearch cluster endpoint URL
-            username (str, optional): OpenSearch username
-            password (str, optional): OpenSearch password
             verify_ssl (bool): Whether to verify SSL certificates
         """
-        super().__init__(opensearch_endpoint, username, password, verify_ssl)
+        super().__init__(opensearch_endpoint, verify_ssl)
         self.index_manager = OpenSearchIndexManager()
         logger.info(f"Initialized OpenSearchReindexManager with endpoint: {self.opensearch_endpoint}")
     

@@ -12,6 +12,7 @@ Key features:
 - Error handling and recovery
 - Comprehensive logging
 - Parallel processing with configurable threads
+- Support for AWS IAM authentication
 """
 
 import boto3
@@ -49,7 +50,6 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
     
     Attributes:
         opensearch_endpoint (str): The OpenSearch cluster endpoint URL
-        auth_header (str): The authentication header for API requests
         batch_size (int): Number of documents to process in each batch
         s3_client (boto3.client): AWS S3 client
         index_manager (OpenSearchIndexManager): Manager for index operations
@@ -57,7 +57,6 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
     """
     
     def __init__(self, batch_size: int = 10000, opensearch_endpoint: Optional[str] = None, 
-                 username: Optional[str] = None, password: Optional[str] = None,
                  verify_ssl: bool = False, max_workers: int = 4):
         """
         Initialize the bulk ingestion manager.
@@ -65,12 +64,10 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
         Args:
             batch_size (int): Number of documents to process in each batch
             opensearch_endpoint (str, optional): The OpenSearch cluster endpoint URL
-            username (str, optional): OpenSearch username
-            password (str, optional): OpenSearch password
             verify_ssl (bool): Whether to verify SSL certificates
             max_workers (int): Maximum number of parallel threads for processing
         """
-        super().__init__(opensearch_endpoint, username, password, verify_ssl)
+        super().__init__(opensearch_endpoint, verify_ssl)
         self.batch_size = batch_size
         self.s3_client = boto3.client('s3')
         self.index_manager = OpenSearchIndexManager()
@@ -120,15 +117,11 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
         for attempt in range(max_retries):
             try:
                 bulk_request = self._create_bulk_request(batch, index_name)
-                response = requests.post(
-                    f"{self.opensearch_endpoint}/_bulk",
-                    headers={
-                        'Authorization': self.auth_header,
-                        'Content-Type': 'application/x-ndjson',
-                        'Accept': 'application/json'
-                    },
+                response = self._make_request(
+                    'POST',
+                    '/_bulk',
                     data=bulk_request,
-                    verify=self.verify_ssl
+                    headers={'Content-Type': 'application/x-ndjson'}
                 )
                 
                 if response.status_code == 429:  # Rate limit hit
@@ -136,11 +129,6 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                     logger.warning(f"Rate limit hit, retrying in {delay} seconds (attempt {attempt + 1}/{max_retries})")
                     time.sleep(delay)
                     continue
-                
-                if response.status_code != 200:
-                    logger.error(f"Failed to process batch from {file_key}. Status code: {response.status_code}")
-                    logger.error(f"Response: {response.text}")
-                    return False
                 
                 result = response.json()
                 if result.get('errors', False):
