@@ -113,38 +113,54 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
         Returns:
             bool: True if batch was processed successfully, False otherwise
         """
-        try:
-            bulk_request = self._create_bulk_request(batch, index_name)
-            
-            response = requests.post(
-                f"{self.opensearch_endpoint}/_bulk",
-                headers={
-                    'Authorization': self.auth_header,
-                    'Content-Type': 'application/x-ndjson',
-                    'Accept': 'application/json'
-                },
-                data=bulk_request,
-                verify=self.verify_ssl
-            )
-            
-            if response.status_code != 200:
-                logger.error(f"Failed to process batch from {file_key}. Status code: {response.status_code}")
-                logger.error(f"Response: {response.text}")
+        max_retries = 3
+        base_delay = 1  # Base delay in seconds
+        max_delay = 30  # Maximum delay in seconds
+        
+        for attempt in range(max_retries):
+            try:
+                bulk_request = self._create_bulk_request(batch, index_name)
+                response = requests.post(
+                    f"{self.opensearch_endpoint}/_bulk",
+                    headers={
+                        'Authorization': self.auth_header,
+                        'Content-Type': 'application/x-ndjson',
+                        'Accept': 'application/json'
+                    },
+                    data=bulk_request,
+                    verify=self.verify_ssl
+                )
+                
+                if response.status_code == 429:  # Rate limit hit
+                    delay = min(base_delay * (2 ** attempt), max_delay)  # Exponential backoff
+                    logger.warning(f"Rate limit hit, retrying in {delay} seconds (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(delay)
+                    continue
+                
+                if response.status_code != 200:
+                    logger.error(f"Failed to process batch from {file_key}. Status code: {response.status_code}")
+                    logger.error(f"Response: {response.text}")
+                    return False
+                
+                result = response.json()
+                if result.get('errors', False):
+                    logger.error(f"Errors in batch from {file_key}: {json.dumps(result, indent=2)}")
+                    return False
+                
+                with self._lock:
+                    self._processed_count += len(batch)
+                
+                return True
+                
+            except Exception as e:
+                logger.error(f"Error processing batch from {file_key}: {str(e)}")
+                if attempt < max_retries - 1:
+                    delay = min(base_delay * (2 ** attempt), max_delay)
+                    time.sleep(delay)
+                    continue
                 return False
-            
-            result = response.json()
-            if result.get('errors', False):
-                logger.error(f"Errors in batch from {file_key}: {json.dumps(result, indent=2)}")
-                return False
-            
-            with self._lock:
-                self._processed_count += len(batch)
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error processing batch from {file_key}: {str(e)}")
-            return False
+        
+        return False
 
     def _process_batch_worker(self, index_name: str, file_key: str) -> None:
         """
@@ -269,7 +285,7 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             
             # Reset processed count
             self._processed_count = 0
-            
+            batch_count = 0
             # Create thread pool for batch processing
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 futures = []
@@ -281,8 +297,12 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                         batch.append(document)
                         
                         if len(batch) >= self.batch_size:
+                            batch_count += 1
+                            logger.info(f"Batch {batch_count} created with {len(batch)} documents")
                             self._batch_queue.put(batch.copy())
                             batch = []
+                            # Add a small delay between batches to prevent overwhelming the cluster
+                            time.sleep(0.1)
                             
                     except Exception as e:
                         logger.error(f"Error processing row {row_count} in file {key}: {str(e)}")
@@ -293,10 +313,12 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                 
                 # Add poison pills to stop workers
                 for _ in range(self.max_workers):
+                    logger.info(f"Adding poison pill {_} to queue")
                     self._batch_queue.put(None)
                 
                 # Start worker threads
                 for _ in range(self.max_workers):
+                    logger.info(f"Adding worker thread {_} to executor")
                     futures.append(
                         executor.submit(self._process_batch_worker, index_name, key)
                     )
@@ -342,6 +364,7 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             logger.info(f"Starting data ingestion from bucket: {bucket}, prefix: {prefix}")
             
             # Validate and cleanup target index
+            logger.info(f"Validating and cleaning up index: {index_name}")
             cleanup_result = self.index_manager.validate_and_cleanup_index(index_name)
             if cleanup_result["status"] == "error":
                 logger.error(f"Index cleanup failed: {cleanup_result['message']}")

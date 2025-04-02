@@ -24,6 +24,7 @@ from datetime import datetime
 import urllib3
 from opensearch_base_manager import OpenSearchBaseManager
 from typing import Optional, Dict, Any
+import json
 
 # Load environment variables
 load_dotenv()
@@ -33,6 +34,9 @@ logger = logging.getLogger(__name__)
 
 # Disable SSL verification warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Get configuration from environment variables
+INDEX_RECREATE_THRESHOLD = int(os.getenv('INDEX_RECREATE_THRESHOLD', '1000000'))
 
 class OpenSearchIndexManager(OpenSearchBaseManager):
     """
@@ -60,52 +64,170 @@ class OpenSearchIndexManager(OpenSearchBaseManager):
         """
         super().__init__(opensearch_endpoint, username, password, verify_ssl)
         logger.info(f"Initialized OpenSearchIndexManager with endpoint: {self.opensearch_endpoint}")
+        logger.info(f"Using index recreate threshold: {INDEX_RECREATE_THRESHOLD}")
 
-    def validate_and_cleanup_index(self, index_name: str) -> Dict[str, Any]:
+    def _recreate_index(self, index_name: str, count_result: int) -> dict:
         """
-        Validate and clean up an index.
+        Recreate an index with the same settings and mappings.
+        
+        Args:
+            index_name (str): Name of the index to recreate
+            count_result (int): Number of documents that were in the original index
+            
+        Returns:
+            dict: Result of the recreation operation
+        """
+        try:
+            # Get index settings and mappings
+            settings_response = requests.get(
+                f"{self.opensearch_endpoint}/{index_name}/_settings",
+                headers={'Authorization': self.auth_header},
+                verify=self.verify_ssl
+            )
+            mappings_response = requests.get(
+                f"{self.opensearch_endpoint}/{index_name}/_mappings",
+                headers={'Authorization': self.auth_header},
+                verify=self.verify_ssl
+            )
+            
+            if settings_response.status_code != 200 or mappings_response.status_code != 200:
+                logger.error("Failed to get index settings or mappings")
+                return {
+                    "status": "error",
+                    "message": "Failed to get index settings or mappings"
+                }
+            
+            settings_data = settings_response.json()
+            mappings_data = mappings_response.json()
+            
+            # Extract settings and mappings from the response
+            if index_name not in settings_data or index_name not in mappings_data:
+                logger.error(f"Index {index_name} not found in settings or mappings response")
+                return {
+                    "status": "error",
+                    "message": f"Index {index_name} not found in settings or mappings response"
+                }
+            
+            # Extract the actual settings and mappings
+            settings = settings_data[index_name].get('settings', {})
+            mappings = mappings_data[index_name].get('mappings', {})
+            
+            # Filter out internal settings that can't be set during index creation
+            if 'index' in settings:
+                index_settings = settings['index']
+                # Keep only the settings that can be set during index creation
+                allowed_settings = {
+                    'number_of_shards': index_settings.get('number_of_shards'),
+                    'number_of_replicas': index_settings.get('number_of_replicas')
+                }
+                settings = {'index': allowed_settings}
+            
+            # Drop the index
+            delete_response = requests.delete(
+                f"{self.opensearch_endpoint}/{index_name}",
+                headers={'Authorization': self.auth_header},
+                verify=self.verify_ssl
+            )
+            
+            if delete_response.status_code != 200:
+                logger.error(f"Failed to drop index {index_name}")
+                return {
+                    "status": "error",
+                    "message": f"Failed to drop index {index_name}"
+                }
+            
+            # Create new index with same settings and mappings
+            create_payload = {
+                "settings": settings,
+                "mappings": mappings
+            }
+            
+            create_response = requests.put(
+                f"{self.opensearch_endpoint}/{index_name}",
+                headers={'Authorization': self.auth_header},
+                json=create_payload,
+                verify=self.verify_ssl
+            )
+            
+            if create_response.status_code != 200:
+                logger.error(f"Failed to recreate index {index_name}")
+                logger.error(f"Create response: {create_response.text}")
+                return {
+                    "status": "error",
+                    "message": f"Failed to recreate index {index_name}"
+                }
+            
+            return {
+                "status": "success",
+                "message": f"Successfully dropped and recreated index {index_name}",
+                "documents_deleted": count_result
+            }
+            
+        except Exception as e:
+            logger.error(f"Error during index recreation: {str(e)}")
+            return {
+                "status": "error",
+                "message": f"Error during index recreation: {str(e)}"
+            }
+
+    def validate_and_cleanup_index(self, index_name: str) -> dict:
+        """
+        Validate and clean up an OpenSearch index.
         
         Args:
             index_name (str): Name of the index to validate and clean up
             
         Returns:
-            Dict[str, Any]: Result containing status and details
+            dict: Result of the cleanup operation
         """
         try:
             # Check if index exists
             if not self._verify_index_exists(index_name):
+                logger.info(f"Index {index_name} does not exist")
                 return {
                     "status": "error",
                     "message": f"Index {index_name} does not exist"
                 }
             
-            # Check if index is part of any aliases
-            alias_check = self._check_index_aliases(index_name)
-            logger.info(f"Alias check result: {alias_check}")
-            if alias_check["status"] == "error":
-                logger.error(f"Index {index_name} is part of alias and can't be cleaned-up")
-                return alias_check
-            
             # Get document count
-            doc_count = self._get_index_count(index_name)
-            if doc_count == 0:
+            count_result = self._get_index_count(index_name)
+            if count_result == 0:
+                logger.info(f"Index {index_name} is already empty")
                 return {
                     "status": "success",
                     "message": f"Index {index_name} is already empty"
                 }
             
-            # Delete all documents
-            delete_result = self._delete_all_documents(index_name)
-            if delete_result["status"] == "success":
+            logger.info(f"Found {count_result} documents in index {index_name}")
+            
+            # If document count exceeds threshold, drop and recreate the index
+            if count_result > INDEX_RECREATE_THRESHOLD:
+                logger.info(f"Document count exceeds {INDEX_RECREATE_THRESHOLD}, dropping and recreating index {index_name}")
+                return self._recreate_index(index_name, count_result)
+            
+            # Otherwise, delete all documents
+            delete_response = requests.post(
+                f"{self.opensearch_endpoint}/{index_name}/_delete_by_query",
+                headers={'Authorization': self.auth_header},
+                json={"query": {"match_all": {}}},
+                verify=self.verify_ssl
+            )
+            
+            if delete_response.status_code != 200:
+                logger.error(f"Failed to delete documents from index {index_name}")
                 return {
-                    "status": "success",
-                    "message": f"Successfully cleaned up index {index_name}",
-                    "documents_deleted": delete_result["documents_deleted"]
+                    "status": "error",
+                    "message": f"Failed to delete documents from index {index_name}"
                 }
             
-            return delete_result
+            return {
+                "status": "success",
+                "message": f"Successfully deleted {count_result} documents from index {index_name}",
+                "documents_deleted": count_result
+            }
             
         except Exception as e:
+            logger.error(f"Error during index cleanup: {str(e)}")
             return {
                 "status": "error",
                 "message": f"Error during index cleanup: {str(e)}"
