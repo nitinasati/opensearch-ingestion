@@ -39,6 +39,10 @@ class OpenSearchBaseManager:
         Args:
             opensearch_endpoint (str, optional): The OpenSearch cluster endpoint URL
             verify_ssl (bool): Whether to verify SSL certificates
+            
+        Raises:
+            ValueError: If OpenSearch endpoint is not provided
+            Exception: If connection to OpenSearch fails after maximum retries
         """
         self.opensearch_endpoint = opensearch_endpoint or os.getenv('OPENSEARCH_ENDPOINT')
         self.verify_ssl = verify_ssl
@@ -68,6 +72,55 @@ class OpenSearchBaseManager:
         
         # Set up logging
         self._setup_logging()
+        
+        # Test connection with retry logic
+        self._test_connection()
+
+    def _test_connection(self):
+        """
+        Test the connection to OpenSearch with retry logic.
+        
+        Raises:
+            Exception: If connection to OpenSearch fails after maximum retries
+        """
+        max_retries = 3
+        retry_count = 0
+        last_exception = None
+        
+        while retry_count < max_retries:
+            try:
+                logger.info(f"Testing connection to OpenSearch (Attempt {retry_count + 1}/{max_retries})")
+                # Make a simple request to test the connection
+                response = requests.get(
+                    f"https://{self.opensearch_endpoint}",
+                    auth=self.auth,
+                    verify=self.verify_ssl,
+                    timeout=10
+                )
+                response.raise_for_status()
+                logger.info("Successfully connected to OpenSearch")
+                return
+                
+            except requests.exceptions.RequestException as e:
+                last_exception = e
+                retry_count += 1
+                logger.error(f"Error connecting to OpenSearch (Attempt {retry_count}/{max_retries}): {str(e)}")
+                
+                if hasattr(e, 'response') and e.response is not None:
+                    if hasattr(e.response, 'text'):
+                        logger.error(f"Response text: {e.response.text}")
+                    if hasattr(e.response, 'headers'):
+                        logger.error(f"Response headers: {e.response.headers}")
+                
+                if retry_count < max_retries:
+                    # Exponential backoff: 1s, 2s, 4s
+                    wait_time = 2 ** (retry_count - 1)
+                    logger.info(f"Retrying in {wait_time} seconds...")
+                    import time
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"Failed to connect to OpenSearch after {max_retries} attempts. Giving up.")
+                    raise Exception(f"Failed to connect to OpenSearch after {max_retries} attempts: {str(last_exception)}")
 
     def _make_request(self, method: str, path: str, data: Optional[Dict[str, Any]] = None, headers: Optional[Dict[str, str]] = None) -> requests.Response:
         """
@@ -81,6 +134,9 @@ class OpenSearchBaseManager:
             
         Returns:
             requests.Response: Response from OpenSearch
+            
+        Raises:
+            requests.exceptions.RequestException: If all retry attempts fail
         """
         url = f"https://{self.opensearch_endpoint}{path}"
         request_headers = {
@@ -92,48 +148,66 @@ class OpenSearchBaseManager:
         if headers:
             request_headers.update(headers)
         
-        try:
-            logger.debug(f"Making request to OpenSearch: {method} {url}")
-            
-            # Determine if data is JSON or string
-            if data is not None:
-                if isinstance(data, dict):
-                    response = requests.request(
-                        method=method,
-                        url=url,
-                        headers=request_headers,
-                        json=data,
-                        auth=self.auth,
-                        verify=self.verify_ssl
-                    )
+        max_retries = 3
+        retry_count = 0
+        last_exception = None
+        
+        while retry_count < max_retries:
+            try:
+                logger.debug(f"Making request to OpenSearch: {method} {url} (Attempt {retry_count + 1}/{max_retries})")
+                
+                # Determine if data is JSON or string
+                if data is not None:
+                    if isinstance(data, dict):
+                        response = requests.request(
+                            method=method,
+                            url=url,
+                            headers=request_headers,
+                            json=data,
+                            auth=self.auth,
+                            verify=self.verify_ssl
+                        )
+                    else:
+                        response = requests.request(
+                            method=method,
+                            url=url,
+                            headers=request_headers,
+                            data=data,
+                            auth=self.auth,
+                            verify=self.verify_ssl
+                        )
                 else:
                     response = requests.request(
                         method=method,
                         url=url,
                         headers=request_headers,
-                        data=data,
                         auth=self.auth,
                         verify=self.verify_ssl
                     )
-            else:
-                response = requests.request(
-                    method=method,
-                    url=url,
-                    headers=request_headers,
-                    auth=self.auth,
-                    verify=self.verify_ssl
-                )
+                    
+                response.raise_for_status()
+                return response
                 
-            response.raise_for_status()
-            return response
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error making request to OpenSearch: {str(e)}")
-            if hasattr(e.response, 'text'):
-                logger.error(f"Response text: {e.response.text}")
-            if hasattr(e.response, 'headers'):
-                logger.error(f"Response headers: {e.response.headers}")
-            raise
+            except requests.exceptions.RequestException as e:
+                last_exception = e
+                retry_count += 1
+                logger.error(f"Error making request to OpenSearch (Attempt {retry_count}/{max_retries}): {str(e)}")
+                
+                if hasattr(e, 'response') and e.response is not None:
+                    if hasattr(e.response, 'text'):
+                        logger.error(f"Response text: {e.response.text}")
+                    if hasattr(e.response, 'headers'):
+                        logger.error(f"Response headers: {e.response.headers}")
+                
+                if retry_count < max_retries:
+                    # Exponential backoff: 1s, 2s, 4s
+                    wait_time = 2 ** (retry_count - 1)
+                    logger.info(f"Retrying in {wait_time} seconds...")
+                    import time
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"Failed to connect to OpenSearch after {max_retries} attempts. Giving up.")
+                    raise last_exception
 
     def _setup_logging(self):
         """Set up logging configuration."""
