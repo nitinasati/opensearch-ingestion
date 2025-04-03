@@ -505,6 +505,8 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
         skipped_files = []
         
         try:
+            # Normalize the folder path to handle both relative and absolute paths
+            folder_path = os.path.abspath(folder_path)
             logger.info(f"Processing all files in folder: {folder_path}")
             
             # Check if folder exists
@@ -521,8 +523,8 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                         if os.path.isfile(os.path.join(folder_path, f))]
             
             # Filter for CSV and JSON files
-            csv_files = [f for f in all_files if f.endswith('.csv')]
-            json_files = [f for f in all_files if f.endswith('.json')]
+            csv_files = [f for f in all_files if f.lower().endswith('.csv')]
+            json_files = [f for f in all_files if f.lower().endswith('.json')]
             
             logger.info(f"Found {len(csv_files)} CSV files and {len(json_files)} JSON files in folder {folder_path}")
             
@@ -782,5 +784,5 @@ if __name__ == "__main__":
 # python bulkupdate.py --local-files data1.csv data2.csv --index my_index_primary --batch-size 1000 --max-workers 8
 # python bulkupdate.py --local-files data1.json data2.json --index my_index_primary --batch-size 1000 --max-workers 8
 # python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --local-files data1.csv data2.json --index my_index_primary --batch-size 1000 --max-workers 8
-# python bulkupdate.py --local-folder ./data_folder --index my_index_primary --batch-size 1000 --max-workers 8
+# python bulkupdate.py --local-folder ./testdata/member_data --index my_index_primary --batch-size 1000 --max-workers 2
 
