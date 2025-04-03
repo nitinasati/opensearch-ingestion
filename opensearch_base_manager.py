@@ -91,8 +91,12 @@ class OpenSearchBaseManager:
             
             # Check if we're already running as the target role
             current_role_arn = current_identity['Arn']
-            if current_role_arn == self.role_arn:
-                logger.info("Already running as target role, skipping role assumption")
+            target_role_name = self.role_arn.split('/')[-1]
+            
+            # If we're already running as the target role or a role with the same name,
+            # just return the current session
+            if target_role_name in current_role_arn:
+                logger.info(f"Already running as role containing '{target_role_name}', skipping role assumption")
                 return boto3.Session()
             
             # Assume the role
