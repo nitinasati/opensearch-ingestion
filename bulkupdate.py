@@ -326,30 +326,105 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             logger.error(f"Error processing file {key}: {str(e)}")
             return 0
 
-    def ingest_data(self, bucket: str, prefix: str, index_name: str) -> Dict[str, Any]:
+    def process_local_file(self, file_path: str, index_name: str) -> int:
         """
-        Ingest data from all CSV files in the specified S3 bucket and prefix.
-        
-        This method handles the complete ingestion process including:
-        - Validating and cleaning up target index
-        - Processing all CSV files in the bucket
-        - Verifying document counts
-        - Providing detailed progress information
+        Process a local CSV file and return number of processed rows.
         
         Args:
-            bucket (str): S3 bucket name
-            prefix (str): S3 prefix to filter files
+            file_path (str): Path to the local CSV file
             index_name (str): Name of the target index
             
         Returns:
-            dict: Operation result containing status and details
+            int: Number of rows processed
+        """
+        file_start_time = time.time()
+        try:
+            logger.info(f"Processing local file: {file_path}")
+            
+            # Read CSV using pandas
+            df = pd.read_csv(file_path)
+            logger.info(f"Found {len(df.columns)} columns in file: {file_path}")
+            
+            batch = []
+            row_count = 0
+            
+            # Reset processed count
+            self._processed_count = 0
+            batch_count = 0
+            # Create thread pool for batch processing
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                futures = []
+                
+                for _, row in df.iterrows():
+                    row_count += 1
+                    try:
+                        document = self._create_document(row)
+                        batch.append(document)
+                        
+                        if len(batch) >= self.batch_size:
+                            batch_count += 1
+                            logger.info(f"Batch {batch_count} created with {len(batch)} documents")
+                            self._batch_queue.put(batch.copy())
+                            batch = []
+                            # Add a small delay between batches to prevent overwhelming the cluster
+                            time.sleep(0.1)
+                            
+                    except Exception as e:
+                        logger.error(f"Error processing row {row_count} in file {file_path}: {str(e)}")
+                
+                # Process remaining documents
+                if batch:
+                    self._batch_queue.put(batch)
+                
+                # Add poison pills to stop workers
+                for _ in range(self.max_workers):
+                    logger.info(f"Adding poison pill {_} to queue")
+                    self._batch_queue.put(None)
+                
+                # Start worker threads
+                for _ in range(self.max_workers):
+                    logger.info(f"Adding worker thread {_} to executor")
+                    futures.append(
+                        executor.submit(self._process_batch_worker, index_name, file_path)
+                    )
+                
+                # Wait for all workers to complete
+                for future in as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception as e:
+                        logger.error(f"Worker thread error: {str(e)}")
+            
+            file_time = time.time() - file_start_time
+            logger.info(f"Completed processing file {file_path} in {file_time:.2f} seconds")
+            return self._processed_count
+            
+        except Exception as e:
+            logger.error(f"Error processing file {file_path}: {str(e)}")
+            return 0
+
+    def ingest_data(self, bucket: Optional[str] = None, prefix: Optional[str] = None, 
+                    local_files: Optional[List[str]] = None, index_name: str = None) -> Dict[str, Any]:
+        """
+        Ingest data from CSV files into OpenSearch.
+        
+        This method can process files from S3, local files, or both.
+        
+        Args:
+            bucket (str, optional): S3 bucket name
+            prefix (str, optional): S3 prefix to filter files
+            local_files (List[str], optional): List of local CSV file paths
+            index_name (str): Name of the target index
+            
+        Returns:
+            Dict[str, Any]: Result containing status and details
         """
         start_time = time.time()
         total_rows = 0
         total_files = 0
         
         try:
-            logger.info(f"Starting data ingestion from bucket: {bucket}, prefix: {prefix}")
+            logger.info(f"Starting data ingestion to index: {index_name}")
             
             # Validate and cleanup target index
             logger.info(f"Validating and cleaning up index: {index_name}")
@@ -358,24 +433,41 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                 logger.error(f"Index cleanup failed: {cleanup_result['message']}")
                 return cleanup_result
             
-            # List objects in S3 bucket with prefix
-            paginator = self.s3_client.get_paginator('list_objects_v2')
-            for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-                if 'Contents' not in page:
-                    logger.warning(f"No objects found in bucket {bucket} with prefix {prefix}")
-                    continue
-                
-                for obj in page['Contents']:
-                    key = obj['Key']
-                    if not key.endswith('.csv'):
-                        logger.debug(f"Skipping non-CSV file: {key}")
+            # Process local files if provided
+            if local_files:
+                logger.info(f"Processing {len(local_files)} local files")
+                for file_path in local_files:
+                    if not file_path.endswith('.csv'):
+                        logger.warning(f"Skipping non-CSV file: {file_path}")
                         continue
                     
                     total_files += 1
-                    logger.info(f"Processing file {total_files}: {key}")
-                    rows_processed = self.process_s3_file(bucket, key, index_name)
+                    logger.info(f"Processing local file {total_files}: {file_path}")
+                    rows_processed = self.process_local_file(file_path, index_name)
                     total_rows += rows_processed
-                    logger.info(f"Processed {rows_processed} rows from {key}")
+                    logger.info(f"Processed {rows_processed} rows from {file_path}")
+            
+            # Process S3 files if bucket and prefix are provided
+            if bucket and prefix:
+                logger.info(f"Processing files from S3 bucket: {bucket}, prefix: {prefix}")
+                # List objects in S3 bucket with prefix
+                paginator = self.s3_client.get_paginator('list_objects_v2')
+                for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+                    if 'Contents' not in page:
+                        logger.warning(f"No objects found in bucket {bucket} with prefix {prefix}")
+                        continue
+                    
+                    for obj in page['Contents']:
+                        key = obj['Key']
+                        if not key.endswith('.csv'):
+                            logger.debug(f"Skipping non-CSV file: {key}")
+                            continue
+                        
+                        total_files += 1
+                        logger.info(f"Processing S3 file {total_files}: {key}")
+                        rows_processed = self.process_s3_file(bucket, key, index_name)
+                        total_rows += rows_processed
+                        logger.info(f"Processed {rows_processed} rows from {key}")
             
             # Verify document count with retries
             verification_result = self._verify_document_count(index_name, total_rows)
@@ -424,15 +516,24 @@ def main():
     Handles command line arguments and orchestrates the data ingestion process.
     """
     # Set up argument parser
-    parser = argparse.ArgumentParser(description='OpenSearch Bulk Ingestion from S3')
-    parser.add_argument('--bucket', required=True, help='S3 bucket name')
-    parser.add_argument('--prefix', required=True, help='S3 prefix')
+    parser = argparse.ArgumentParser(description='OpenSearch Bulk Ingestion from S3 or Local Files')
+    parser.add_argument('--bucket', help='S3 bucket name')
+    parser.add_argument('--prefix', help='S3 prefix')
+    parser.add_argument('--local-files', nargs='+', help='List of local CSV files to process')
     parser.add_argument('--index', required=True, help='OpenSearch index name')
     parser.add_argument('--batch-size', type=int, default=10000, help='Number of documents to process in each batch (default: 10000)')
     parser.add_argument('--max-workers', type=int, default=4, help='Maximum number of parallel threads (default: 4)')
     args = parser.parse_args()
     
-    logger.info(f"Starting bulk ingestion script with bucket: {args.bucket}, prefix: {args.prefix}, index: {args.index}")
+    # Validate that at least one data source is provided
+    if not args.bucket and not args.local_files:
+        parser.error("At least one of --bucket or --local-files must be provided")
+    
+    logger.info(f"Starting bulk ingestion script with index: {args.index}")
+    if args.bucket:
+        logger.info(f"S3 source: bucket={args.bucket}, prefix={args.prefix}")
+    if args.local_files:
+        logger.info(f"Local files: {', '.join(args.local_files)}")
     
     try:
         # Initialize ingestion service with batch size and max workers
@@ -442,7 +543,12 @@ def main():
         )
         
         # Start ingestion with command line arguments
-        result = ingestion_service.ingest_data(args.bucket, args.prefix, args.index)
+        result = ingestion_service.ingest_data(
+            bucket=args.bucket,
+            prefix=args.prefix,
+            local_files=args.local_files,
+            index_name=args.index
+        )
         
         # Print results
         if result["status"] == "success":
@@ -471,4 +577,6 @@ if __name__ == "__main__":
 
 # Example usage:
 # python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index my_index_primary --batch-size 1000 --max-workers 8
+# python bulkupdate.py --local-files data1.csv data2.csv --index my_index_primary --batch-size 1000 --max-workers 8
+# python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --local-files data1.csv data2.csv --index my_index_primary --batch-size 1000 --max-workers 8
 
