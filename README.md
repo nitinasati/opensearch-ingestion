@@ -265,16 +265,16 @@ Detailed logging is provided for:
 The tool requires an IAM role with the following permissions:
 
 1. **OpenSearch Permissions**:
-```json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
+  ```json
+  {
+      "Version": "2012-10-17",
+      "Statement": [
+          {
+              "Effect": "Allow",
+              "Action": [
                 "es:ESHttp*"
-            ],
-            "Resource": [
+              ],
+              "Resource": [
                 "arn:aws:es:region:account:domain/domain-name/*"
             ]
         }
