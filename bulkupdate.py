@@ -487,6 +487,100 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             logger.error(f"Error processing file {file_path}: {str(e)}")
             return 0
 
+    def process_local_folder(self, folder_path: str, index_name: str) -> Dict[str, Any]:
+        """
+        Process all CSV and JSON files in a local folder.
+        
+        Args:
+            folder_path (str): Path to the local folder containing CSV or JSON files
+            index_name (str): Name of the target index
+            
+        Returns:
+            Dict[str, Any]: Result containing status and details
+        """
+        start_time = time.time()
+        total_rows = 0
+        total_files = 0
+        processed_files = []
+        skipped_files = []
+        
+        try:
+            logger.info(f"Processing all files in folder: {folder_path}")
+            
+            # Check if folder exists
+            if not os.path.isdir(folder_path):
+                error_msg = f"Folder does not exist: {folder_path}"
+                logger.error(error_msg)
+                return {
+                    "status": "error",
+                    "message": error_msg
+                }
+            
+            # Get all files in the folder
+            all_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) 
+                        if os.path.isfile(os.path.join(folder_path, f))]
+            
+            # Filter for CSV and JSON files
+            csv_files = [f for f in all_files if f.endswith('.csv')]
+            json_files = [f for f in all_files if f.endswith('.json')]
+            
+            logger.info(f"Found {len(csv_files)} CSV files and {len(json_files)} JSON files in folder {folder_path}")
+            
+            # Process CSV files
+            for file_path in csv_files:
+                try:
+                    total_files += 1
+                    logger.info(f"Processing local CSV file {total_files}: {file_path}")
+                    rows_processed = self.process_local_file(file_path, index_name)
+                    total_rows += rows_processed
+                    processed_files.append(file_path)
+                    logger.info(f"Processed {rows_processed} rows from {file_path}")
+                except Exception as e:
+                    logger.error(f"Error processing file {file_path}: {str(e)}")
+                    skipped_files.append(file_path)
+            
+            # Process JSON files
+            for file_path in json_files:
+                try:
+                    total_files += 1
+                    logger.info(f"Processing local JSON file {total_files}: {file_path}")
+                    rows_processed = self.process_local_json_file(file_path, index_name)
+                    total_rows += rows_processed
+                    processed_files.append(file_path)
+                    logger.info(f"Processed {rows_processed} records from {file_path}")
+                except Exception as e:
+                    logger.error(f"Error processing file {file_path}: {str(e)}")
+                    skipped_files.append(file_path)
+            
+            end_time = time.time()
+            total_time = end_time - start_time
+            
+            success_msg = f"Successfully processed {total_rows} rows from {len(processed_files)} files in folder {folder_path}"
+            logger.info(success_msg)
+            logger.info(f"Total time taken: {round(total_time, 2)} seconds")
+            
+            return {
+                "status": "success",
+                "total_rows_processed": total_rows,
+                "total_files_processed": len(processed_files),
+                "processed_files": processed_files,
+                "skipped_files": skipped_files,
+                "total_time_seconds": round(total_time, 2),
+                "average_time_per_file": round(total_time / len(processed_files), 2) if processed_files else 0
+            }
+            
+        except Exception as e:
+            error_msg = f"Error processing folder {folder_path}: {str(e)}"
+            logger.error(error_msg)
+            return {
+                "status": "error",
+                "message": error_msg,
+                "total_rows_processed": total_rows,
+                "total_files_processed": total_files,
+                "processed_files": processed_files,
+                "skipped_files": skipped_files
+            }
+
     def ingest_data(self, bucket: Optional[str] = None, prefix: Optional[str] = None, 
                     local_files: Optional[List[str]] = None, index_name: str = None) -> Dict[str, Any]:
         """
@@ -609,20 +703,23 @@ def main():
     parser.add_argument('--bucket', help='S3 bucket name')
     parser.add_argument('--prefix', help='S3 prefix')
     parser.add_argument('--local-files', nargs='+', help='List of local CSV or JSON files to process')
+    parser.add_argument('--local-folder', help='Path to a folder containing CSV or JSON files to process')
     parser.add_argument('--index', required=True, help='OpenSearch index name')
     parser.add_argument('--batch-size', type=int, default=10000, help='Number of documents to process in each batch (default: 10000)')
     parser.add_argument('--max-workers', type=int, default=4, help='Maximum number of parallel threads (default: 4)')
     args = parser.parse_args()
     
     # Validate that at least one data source is provided
-    if not args.bucket and not args.local_files:
-        parser.error("At least one of --bucket or --local-files must be provided")
+    if not args.bucket and not args.local_files and not args.local_folder:
+        parser.error("At least one of --bucket, --local-files, or --local-folder must be provided")
     
     logger.info(f"Starting bulk ingestion script with index: {args.index}")
     if args.bucket:
         logger.info(f"S3 source: bucket={args.bucket}, prefix={args.prefix}")
     if args.local_files:
         logger.info(f"Local files: {', '.join(args.local_files)}")
+    if args.local_folder:
+        logger.info(f"Local folder: {args.local_folder}")
     
     try:
         # Initialize ingestion service with batch size and max workers
@@ -630,6 +727,22 @@ def main():
             batch_size=args.batch_size,
             max_workers=args.max_workers
         )
+        
+        # Process local folder if provided
+        if args.local_folder:
+            folder_result = ingestion_service.process_local_folder(args.local_folder, args.index)
+            if folder_result["status"] == "error":
+                logger.error(f"Failed to process folder: {folder_result['message']}")
+                return 1
+            
+            logger.info(f"Successfully processed {folder_result['total_rows_processed']} rows from {folder_result['total_files_processed']} files in folder {args.local_folder}")
+            logger.info(f"Total time taken: {folder_result['total_time_seconds']} seconds")
+            logger.info(f"Average time per file: {folder_result['average_time_per_file']} seconds")
+            
+            if folder_result['skipped_files']:
+                logger.warning(f"Skipped {len(folder_result['skipped_files'])} files due to errors")
+            
+            return 0
         
         # Start ingestion with command line arguments
         result = ingestion_service.ingest_data(
@@ -669,4 +782,5 @@ if __name__ == "__main__":
 # python bulkupdate.py --local-files data1.csv data2.csv --index my_index_primary --batch-size 1000 --max-workers 8
 # python bulkupdate.py --local-files data1.json data2.json --index my_index_primary --batch-size 1000 --max-workers 8
 # python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --local-files data1.csv data2.json --index my_index_primary --batch-size 1000 --max-workers 8
+# python bulkupdate.py --local-folder ./data_folder --index my_index_primary --batch-size 1000 --max-workers 8
 
