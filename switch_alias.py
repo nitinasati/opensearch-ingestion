@@ -23,7 +23,7 @@ import time
 from datetime import datetime
 import urllib3
 from opensearch_base_manager import OpenSearchBaseManager
-from typing import Optional
+from typing import Optional, Dict, Any
 
 # Load environment variables
 load_dotenv()
@@ -56,47 +56,115 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
         super().__init__(opensearch_endpoint, verify_ssl)
         logger.info(f"Initialized OpenSearchAliasManager with endpoint: {self.opensearch_endpoint}")
 
-    def _get_alias_info(self, alias_name: str) -> dict:
+    def _get_alias_info(self, alias_name: str) -> Dict[str, Any]:
         """
         Get information about an alias.
         
         Args:
-            alias_name (str): Name of the alias to get information for
+            alias_name (str): Name of the alias
             
         Returns:
-            dict: Alias information including index, filter, and routing settings
+            Dict[str, Any]: Alias information
         """
         try:
-            logger.debug(f"Getting information for alias: {alias_name}")
-            response = requests.get(
-                f"{self.opensearch_endpoint}/_cat/aliases/{alias_name}?format=json",
-                headers={
-                    'Authorization': self.auth_header,
-                    'Accept': self.CONTENT_TYPE_JSON
-                },
-                verify=self.verify_ssl
+            response = self._make_request('GET', f'/_alias/{alias_name}')
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error getting alias info: {str(e)}")
+            raise
+
+    def _create_alias(self, alias_name: str, index_name: str) -> Dict[str, Any]:
+        """
+        Create a new alias pointing to an index.
+        
+        Args:
+            alias_name (str): Name of the alias to create
+            index_name (str): Name of the index to point to
+            
+        Returns:
+            Dict[str, Any]: Result of the operation
+        """
+        try:
+            response = self._make_request(
+                'POST',
+                f'/_aliases',
+                data={
+                    "actions": [
+                        {
+                            "add": {
+                                "index": index_name,
+                                "alias": alias_name
+                            }
+                        }
+                    ]
+                }
             )
             
             if response.status_code == 200:
-                aliases = response.json()
-                if aliases:
-                    alias_info = {
-                        "alias": aliases[0].get("alias"),
-                        "index": aliases[0].get("index"),
-                        "filter": aliases[0].get("filter"),
-                        "routing.index": aliases[0].get("routing.index"),
-                        "routing.search": aliases[0].get("routing.search")
-                    }
-                    logger.debug(f"Alias info: {alias_info}")
-                    return alias_info
-                logger.warning(f"No information found for alias: {alias_name}")
-                return {}
+                return {
+                    "status": "success",
+                    "message": f"Created alias {alias_name} pointing to {index_name}"
+                }
             else:
-                logger.error(f"Failed to get alias info. Status code: {response.status_code}")
-                return {}
+                return {
+                    "status": "error",
+                    "message": f"Failed to create alias. Status code: {response.status_code}"
+                }
         except Exception as e:
-            logger.error(f"Error getting alias info: {str(e)}")
-            return {}
+            return {
+                "status": "error",
+                "message": f"Error creating alias: {str(e)}"
+            }
+
+    def _switch_alias(self, alias_name: str, old_index: str, new_index: str) -> Dict[str, Any]:
+        """
+        Switch an alias from one index to another.
+        
+        Args:
+            alias_name (str): Name of the alias to switch
+            old_index (str): Current index the alias points to
+            new_index (str): New index to point the alias to
+            
+        Returns:
+            Dict[str, Any]: Result of the operation
+        """
+        try:
+            response = self._make_request(
+                'POST',
+                f'/_aliases',
+                data={
+                    "actions": [
+                        {
+                            "remove": {
+                                "index": old_index,
+                                "alias": alias_name
+                            }
+                        },
+                        {
+                            "add": {
+                                "index": new_index,
+                                "alias": alias_name
+                            }
+                        }
+                    ]
+                }
+            )
+            
+            if response.status_code == 200:
+                return {
+                    "status": "success",
+                    "message": f"Successfully switched alias {alias_name} from {old_index} to {new_index}"
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": f"Failed to switch alias. Status code: {response.status_code}"
+                }
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"Error switching alias: {str(e)}"
+            }
 
     def _validate_document_count_difference(self, source_index: str, target_index: str) -> dict:
         """
@@ -242,15 +310,10 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
             
             # Execute alias update
             logger.info("Executing alias switch operation")
-            response = requests.post(
-                f"{self.opensearch_endpoint}/_aliases",
-                headers={
-                    'Authorization': self.auth_header,
-                    'Content-Type': self.CONTENT_TYPE_JSON,
-                    'Accept': self.CONTENT_TYPE_JSON
-                },
-                json=alias_body,
-                verify=self.verify_ssl
+            response = self._make_request(
+                'POST',
+                f'/_aliases',
+                data=alias_body
             )
             
             if response.status_code != 200:

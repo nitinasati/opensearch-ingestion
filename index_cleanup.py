@@ -62,10 +62,14 @@ class OpenSearchIndexManager(OpenSearchBaseManager):
 
     def validate_and_cleanup_index(self, index_name: str) -> Dict[str, Any]:
         """
-        Validate and cleanup an index if necessary.
+        Validate and clean up an index.
+        
+        This method checks if the index exists, verifies its document count,
+        and cleans up documents if necessary. It also checks if the index
+        is part of an alias and prevents deletion if it is.
         
         Args:
-            index_name (str): Name of the index to validate and cleanup
+            index_name (str): Name of the index to validate and clean up
             
         Returns:
             Dict[str, Any]: Result containing status and details
@@ -79,20 +83,38 @@ class OpenSearchIndexManager(OpenSearchBaseManager):
                     "message": f"Index {index_name} does not exist"
                 }
             
-            # Get document count
-            doc_count = self._get_index_count(index_name)
-            logger.info(f"Current document count for {index_name}: {doc_count}")
+            # Check if index is part of an alias
+            alias_info = self._check_index_aliases(index_name)
+            if alias_info and len(alias_info) > 0:
+                alias_names = list(alias_info.keys())
+                error_msg = f"Index {index_name} is part of alias(es): {', '.join(alias_names)}. Cannot remove data from an aliased index."
+                logger.error(error_msg)
+                return {
+                    "status": "error",
+                    "message": error_msg,
+                    "aliases": alias_names
+                }
             
-            # Get threshold from environment variable
-            threshold = int(os.getenv('INDEX_RECREATE_THRESHOLD', '1000000'))
+            # Get current document count
+            current_count = self._get_index_count(index_name)
+            logger.info(f"Current document count for {index_name}: {current_count}")
             
-            if doc_count > threshold:
-                logger.info(f"Document count ({doc_count}) exceeds threshold ({threshold}). Recreating index...")
-                return self._recreate_index(index_name)
+            # Check if document count is within threshold
+            threshold = int(os.getenv('DOCUMENT_COUNT_THRESHOLD', '1000000'))
+            if current_count <= threshold:
+                logger.info(f"Document count ({current_count}) is within threshold ({threshold}). Cleaning up documents...")
+                cleanup_result = self._delete_all_documents(index_name)
+                if cleanup_result["status"] == "error":
+                    return cleanup_result
+                return {
+                    "status": "success",
+                    "message": f"Successfully cleaned up index {index_name}",
+                    "documents_deleted": current_count
+                }
             else:
-                logger.info(f"Document count ({doc_count}) is within threshold ({threshold}). Cleaning up documents...")
-                return self._delete_all_documents(index_name)
-            
+                logger.info(f"Document count ({current_count}) exceeds threshold ({threshold}). Recreating index...")
+                return self._recreate_index(index_name)
+                
         except Exception as e:
             error_msg = f"Error during index validation and cleanup: {str(e)}"
             logger.error(error_msg)
@@ -150,9 +172,18 @@ class OpenSearchIndexManager(OpenSearchBaseManager):
                     "message": f"Failed to drop index. Status code: {drop_response.status_code}"
                 }
             
+            # Filter out internal settings that can't be set manually
+            index_settings = settings[index_name]["settings"]["index"]
+            filtered_settings = {
+                k: v for k, v in index_settings.items()
+                if k not in ["creation_date", "uuid", "version", "provided_name"]
+            }
+            
             # Create new index with preserved settings and mappings
             create_payload = {
-                "settings": settings[index_name]["settings"],
+                "settings": {
+                    "index": filtered_settings
+                },
                 "mappings": mappings[index_name]["mappings"]
             }
             

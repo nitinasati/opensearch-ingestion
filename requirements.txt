@@ -6,4 +6,5 @@ python-dotenv>=1.0.0
 urllib3>=2.0.0
 argparse>=1.4.0
 typing>=3.7.4
-concurrent-futures>=3.0.5 
+concurrent-futures>=3.0.5
+requests-aws4auth>=1.2.0 
