@@ -403,17 +403,101 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             logger.error(f"Error processing file {file_path}: {str(e)}")
             return 0
 
+    def process_local_json_file(self, file_path: str, index_name: str) -> int:
+        """
+        Process a local JSON file and return number of processed rows.
+        
+        Args:
+            file_path (str): Path to the local JSON file
+            index_name (str): Name of the target index
+            
+        Returns:
+            int: Number of rows processed
+        """
+        file_start_time = time.time()
+        try:
+            logger.info(f"Processing local JSON file: {file_path}")
+            
+            # Read JSON file
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+            
+            # Handle both single object and array of objects
+            if isinstance(data, dict):
+                data = [data]
+            
+            logger.info(f"Found {len(data)} records in JSON file: {file_path}")
+            
+            batch = []
+            row_count = 0
+            
+            # Reset processed count
+            self._processed_count = 0
+            batch_count = 0
+            # Create thread pool for batch processing
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                futures = []
+                
+                for item in data:
+                    row_count += 1
+                    try:
+                        # For JSON, we can use the item directly as a document
+                        document = item
+                        batch.append(document)
+                        
+                        if len(batch) >= self.batch_size:
+                            batch_count += 1
+                            logger.info(f"Batch {batch_count} created with {len(batch)} documents")
+                            self._batch_queue.put(batch.copy())
+                            batch = []
+                            # Add a small delay between batches to prevent overwhelming the cluster
+                            time.sleep(0.1)
+                            
+                    except Exception as e:
+                        logger.error(f"Error processing record {row_count} in file {file_path}: {str(e)}")
+                
+                # Process remaining documents
+                if batch:
+                    self._batch_queue.put(batch)
+                
+                # Add poison pills to stop workers
+                for _ in range(self.max_workers):
+                    logger.info(f"Adding poison pill {_} to queue")
+                    self._batch_queue.put(None)
+                
+                # Start worker threads
+                for _ in range(self.max_workers):
+                    logger.info(f"Adding worker thread {_} to executor")
+                    futures.append(
+                        executor.submit(self._process_batch_worker, index_name, file_path)
+                    )
+                
+                # Wait for all workers to complete
+                for future in as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception as e:
+                        logger.error(f"Worker thread error: {str(e)}")
+            
+            file_time = time.time() - file_start_time
+            logger.info(f"Completed processing file {file_path} in {file_time:.2f} seconds")
+            return self._processed_count
+            
+        except Exception as e:
+            logger.error(f"Error processing file {file_path}: {str(e)}")
+            return 0
+
     def ingest_data(self, bucket: Optional[str] = None, prefix: Optional[str] = None, 
                     local_files: Optional[List[str]] = None, index_name: str = None) -> Dict[str, Any]:
         """
-        Ingest data from CSV files into OpenSearch.
+        Ingest data from CSV or JSON files into OpenSearch.
         
         This method can process files from S3, local files, or both.
         
         Args:
             bucket (str, optional): S3 bucket name
             prefix (str, optional): S3 prefix to filter files
-            local_files (List[str], optional): List of local CSV file paths
+            local_files (List[str], optional): List of local CSV or JSON file paths
             index_name (str): Name of the target index
             
         Returns:
@@ -437,15 +521,20 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             if local_files:
                 logger.info(f"Processing {len(local_files)} local files")
                 for file_path in local_files:
-                    if not file_path.endswith('.csv'):
-                        logger.warning(f"Skipping non-CSV file: {file_path}")
-                        continue
-                    
-                    total_files += 1
-                    logger.info(f"Processing local file {total_files}: {file_path}")
-                    rows_processed = self.process_local_file(file_path, index_name)
-                    total_rows += rows_processed
-                    logger.info(f"Processed {rows_processed} rows from {file_path}")
+                    if file_path.endswith('.csv'):
+                        total_files += 1
+                        logger.info(f"Processing local CSV file {total_files}: {file_path}")
+                        rows_processed = self.process_local_file(file_path, index_name)
+                        total_rows += rows_processed
+                        logger.info(f"Processed {rows_processed} rows from {file_path}")
+                    elif file_path.endswith('.json'):
+                        total_files += 1
+                        logger.info(f"Processing local JSON file {total_files}: {file_path}")
+                        rows_processed = self.process_local_json_file(file_path, index_name)
+                        total_rows += rows_processed
+                        logger.info(f"Processed {rows_processed} records from {file_path}")
+                    else:
+                        logger.warning(f"Skipping unsupported file format: {file_path}")
             
             # Process S3 files if bucket and prefix are provided
             if bucket and prefix:
@@ -519,7 +608,7 @@ def main():
     parser = argparse.ArgumentParser(description='OpenSearch Bulk Ingestion from S3 or Local Files')
     parser.add_argument('--bucket', help='S3 bucket name')
     parser.add_argument('--prefix', help='S3 prefix')
-    parser.add_argument('--local-files', nargs='+', help='List of local CSV files to process')
+    parser.add_argument('--local-files', nargs='+', help='List of local CSV or JSON files to process')
     parser.add_argument('--index', required=True, help='OpenSearch index name')
     parser.add_argument('--batch-size', type=int, default=10000, help='Number of documents to process in each batch (default: 10000)')
     parser.add_argument('--max-workers', type=int, default=4, help='Maximum number of parallel threads (default: 4)')
@@ -578,5 +667,6 @@ if __name__ == "__main__":
 # Example usage:
 # python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index my_index_primary --batch-size 1000 --max-workers 8
 # python bulkupdate.py --local-files data1.csv data2.csv --index my_index_primary --batch-size 1000 --max-workers 8
-# python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --local-files data1.csv data2.csv --index my_index_primary --batch-size 1000 --max-workers 8
+# python bulkupdate.py --local-files data1.json data2.json --index my_index_primary --batch-size 1000 --max-workers 8
+# python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --local-files data1.csv data2.json --index my_index_primary --batch-size 1000 --max-workers 8
 
