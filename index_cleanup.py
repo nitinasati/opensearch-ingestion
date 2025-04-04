@@ -135,14 +135,14 @@ class OpenSearchIndexManager(OpenSearchBaseManager):
         """
         try:
             # Get index settings
-            settings_response = self._make_request('GET', f'/{index_name}/_settings')
-            if settings_response.status_code != 200:
+            settings_result = self._make_request('GET', f'/{index_name}/_settings')
+            if settings_result['status'] != 'success':
                 return {
                     "status": "error",
-                    "message": f"Failed to get index settings. Status code: {settings_response.status_code}"
+                    "message": f"Failed to get index settings: {settings_result['message']}"
                 }
             
-            settings = settings_response.json()
+            settings = settings_result['response'].json()
             if index_name not in settings:
                 return {
                     "status": "error",
@@ -150,14 +150,14 @@ class OpenSearchIndexManager(OpenSearchBaseManager):
                 }
             
             # Get index mappings
-            mappings_response = self._make_request('GET', f'/{index_name}/_mappings')
-            if mappings_response.status_code != 200:
+            mappings_result = self._make_request('GET', f'/{index_name}/_mappings')
+            if mappings_result['status'] != 'success':
                 return {
                     "status": "error",
-                    "message": f"Failed to get index mappings. Status code: {mappings_response.status_code}"
+                    "message": f"Failed to get index mappings: {mappings_result['message']}"
                 }
             
-            mappings = mappings_response.json()
+            mappings = mappings_result['response'].json()
             if index_name not in mappings:
                 return {
                     "status": "error",
@@ -165,11 +165,11 @@ class OpenSearchIndexManager(OpenSearchBaseManager):
                 }
             
             # Drop existing index
-            drop_response = self._make_request('DELETE', f'/{index_name}')
-            if drop_response.status_code != 200:
+            drop_result = self._make_request('DELETE', f'/{index_name}')
+            if drop_result['status'] != 'success':
                 return {
                     "status": "error",
-                    "message": f"Failed to drop index. Status code: {drop_response.status_code}"
+                    "message": f"Failed to drop index: {drop_result['message']}"
                 }
             
             # Filter out internal settings that can't be set manually
@@ -188,9 +188,9 @@ class OpenSearchIndexManager(OpenSearchBaseManager):
             }
             
             logger.info(f"Creating index {index_name} with preserved settings and mappings")
-            create_response = self._make_request('PUT', f'/{index_name}', data=create_payload)
+            create_result = self._make_request('PUT', f'/{index_name}', data=create_payload)
             
-            if create_response.status_code == 200:
+            if create_result['status'] == 'success':
                 return {
                     "status": "success",
                     "message": f"Successfully recreated index {index_name}"
@@ -198,11 +198,11 @@ class OpenSearchIndexManager(OpenSearchBaseManager):
             else:
                 return {
                     "status": "error",
-                    "message": f"Failed to recreate index. Status code: {create_response.status_code}"
+                    "message": f"Failed to create index: {create_result['message']}"
                 }
-            
+                
         except Exception as e:
-            error_msg = f"Error recreating index: {str(e)}"
+            error_msg = f"Error recreating index {index_name}: {str(e)}"
             logger.error(error_msg)
             return {
                 "status": "error",
@@ -248,4 +248,4 @@ if __name__ == "__main__":
     main()
 
 # Example usage:
-# python index_cleanup.py --index my_index_primary 
+# python index_cleanup.py --index member_index_primary 

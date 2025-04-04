@@ -11,6 +11,7 @@ A Python-based system for ingesting data from S3 CSV files into OpenSearch with 
 - Comprehensive error handling and logging
 - AWS S3 integration
 - OpenSearch bulk ingestion
+- Robust response handling for OpenSearch operations
 
 ## Prerequisites
 
@@ -90,6 +91,30 @@ python bulkupdate.py --bucket <bucket_name> --prefix <prefix> --index <index_nam
 #### Example:
 ```bash
 python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index my_index_primary --batch-size 1000 --max-workers 8
+# Example usage:
+# python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index member_index_primary --batch-size 1000 --max-workers 2
+# python bulkupdate.py --local-files member_data.csv member_data.json --index member_index_primary --batch-size 1000 --max-workers 2
+# python bulkupdate.py --local-files data1.json data2.json --index my_index_primary --batch-size 1000 --max-workers 2
+# python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --local-files data1.csv data2.json --index my_index_primary --batch-size 1000 --max-workers 2
+# python bulkupdate.py --local-folder ./testdata/member_data --index my_index_primary --batch-size 1000 --max-workers 2
+```
+
+### Alias Management
+
+The system includes functionality for managing OpenSearch aliases, allowing you to switch aliases between indices with validation:
+
+```bash
+python switch_alias.py --alias <alias_name> --source <source_index> --target <target_index>
+```
+
+#### Required Arguments:
+- `--alias`: Name of the alias to switch
+- `--source`: Current source index name
+- `--target`: New target index name
+
+#### Example:
+```bash
+python switch_alias.py --alias my_index_alias --source my_index_primary --target my_index_secondary
 ```
 
 ### Parallel Processing
@@ -102,6 +127,37 @@ The system now supports parallel processing of CSV files with the following feat
 - Error handling for worker threads
 
 The number of threads can be adjusted based on your system's capabilities and requirements. A higher number of threads may improve performance but will also increase memory usage and network connections.
+
+## Recent Updates
+
+### Response Handling Improvements
+
+The system has been updated with improved response handling for OpenSearch operations:
+
+1. **Consistent Response Structure**:
+   - All OpenSearch operations now return a standardized response dictionary
+   - Response includes status, message, and response object
+   - Proper error handling for all API calls
+
+2. **Fixed Response Access**:
+   - Correctly accessing response objects from the result dictionary
+   - Proper handling of status codes and error messages
+   - Improved error reporting for failed operations
+
+3. **Enhanced Error Handling**:
+   - Better error messages with specific details
+   - Proper logging of error conditions
+   - Graceful recovery from common error scenarios
+
+4. **Index Operations**:
+   - Improved index validation and cleanup
+   - Better handling of index existence checks
+   - Enhanced document count verification
+
+5. **Alias Management**:
+   - Fixed alias switching operations
+   - Improved alias information retrieval
+   - Better validation of alias operations
 
 ## Performance Configuration Guide
 
@@ -218,6 +274,7 @@ AWS_REGION=us-east-1
 INDEX_RECREATE_THRESHOLD=1000000  # Threshold for recreating index
 LOG_LEVEL=INFO
 LOG_FORMAT='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+DOCUMENT_COUNT_THRESHOLD=10  # Percentage threshold for document count differences
 ```
 
 ## Error Handling
@@ -228,6 +285,8 @@ The system includes comprehensive error handling for:
 - CSV parsing errors
 - Document validation failures
 - Worker thread exceptions
+- Response handling errors
+- Alias operation failures
 
 ## Logging
 
@@ -237,6 +296,8 @@ Detailed logging is provided for:
 - Performance metrics
 - Document counts
 - Worker thread status
+- API response details
+- Operation status and results
 
 ## Contributing
 
@@ -301,7 +362,6 @@ The tool requires an IAM role with the following permissions:
     ]
 }
 ```
-  ```
 
 ### Environment Variables
 Required environment variables in `.env` file:

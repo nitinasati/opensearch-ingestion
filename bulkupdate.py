@@ -20,7 +20,7 @@ import pandas as pd
 import json
 import requests
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from io import StringIO
 import time
 import os
@@ -28,10 +28,11 @@ from dotenv import load_dotenv
 import argparse
 from index_cleanup import OpenSearchIndexManager
 import urllib3
-from opensearch_base_manager import OpenSearchBaseManager
+from opensearch_base_manager import OpenSearchBaseManager, OpenSearchException
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Queue
 import threading
+from file_processor import FileProcessor
 
 # Load environment variables
 load_dotenv()
@@ -40,6 +41,9 @@ logger = logging.getLogger(__name__)
 
 # Disable SSL verification warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Constants
+NO_FILES_MESSAGE = "No files to process"
 
 class OpenSearchBulkIngestion(OpenSearchBaseManager):
     """
@@ -67,139 +71,22 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             verify_ssl (bool): Whether to verify SSL certificates
             max_workers (int): Maximum number of parallel threads for processing
         """
-        super().__init__(opensearch_endpoint, verify_ssl)
+        # Initialize parent class
+        super().__init__(opensearch_endpoint=opensearch_endpoint, verify_ssl=verify_ssl)
+        
+        # Initialize instance attributes
         self.batch_size = batch_size
-        self.s3_client = boto3.client('s3')
-        self.index_manager = OpenSearchIndexManager()
         self.max_workers = max_workers
         self._batch_queue = Queue()
         self._processed_count = 0
         self._lock = threading.Lock()
+        
+        # Initialize clients and processors
+        self.s3_client = boto3.client('s3')
+        self.index_manager = OpenSearchIndexManager(opensearch_endpoint=opensearch_endpoint, verify_ssl=verify_ssl)
+        self.file_processor = FileProcessor(batch_size=batch_size, max_workers=max_workers)
+        
         logger.info(f"Initialized OpenSearchBulkIngestion with batch_size: {batch_size}, max_workers: {max_workers}")
-
-    def _create_bulk_request(self, documents: List[Dict[str, Any]], index_name: str) -> str:
-        """
-        Create bulk request body in NDJSON format.
-        
-        Args:
-            documents (List[Dict[str, Any]]): List of documents to index
-            index_name (str): Name of the target index
-            
-        Returns:
-            str: NDJSON formatted bulk request body
-        """
-        bulk_request = []
-        for doc in documents:
-            bulk_request.append(json.dumps({
-                "index": {
-                    "_index": index_name
-                }
-            }))
-            bulk_request.append(json.dumps(doc))
-        return '\n'.join(bulk_request) + '\n'
-
-    def _process_batch(self, batch: List[Dict[str, Any]], index_name: str, file_key: str) -> bool:
-        """
-        Process a batch of documents and send to OpenSearch.
-        
-        Args:
-            batch (List[Dict[str, Any]]): List of documents to process
-            index_name (str): Name of the target index
-            file_key (str): S3 file key being processed
-            
-        Returns:
-            bool: True if batch was processed successfully, False otherwise
-        """
-        max_retries = 3
-        base_delay = 1  # Base delay in seconds
-        max_delay = 30  # Maximum delay in seconds
-        
-        for attempt in range(max_retries):
-            try:
-                bulk_request = self._create_bulk_request(batch, index_name)
-                response = self._make_request(
-                    'POST',
-                    '/_bulk',
-                    data=bulk_request,
-                    headers={'Content-Type': 'application/x-ndjson'}
-                )
-                
-                if response.status_code == 429:  # Rate limit hit
-                    delay = min(base_delay * (2 ** attempt), max_delay)  # Exponential backoff
-                    logger.warning(f"Rate limit hit, retrying in {delay} seconds (attempt {attempt + 1}/{max_retries})")
-                    time.sleep(delay)
-                    continue
-                
-                result = response.json()
-                if result.get('errors', False):
-                    logger.error(f"Errors in batch from {file_key}: {json.dumps(result, indent=2)}")
-                    return False
-                
-                with self._lock:
-                    self._processed_count += len(batch)
-                
-                return True
-                
-            except Exception as e:
-                logger.error(f"Error processing batch from {file_key}: {str(e)}")
-                if attempt < max_retries - 1:
-                    delay = min(base_delay * (2 ** attempt), max_delay)
-                    time.sleep(delay)
-                    continue
-                return False
-        
-        return False
-
-    def _process_batch_worker(self, index_name: str, file_key: str) -> None:
-        """
-        Worker function to process batches from the queue.
-        
-        Args:
-            index_name (str): Name of the target index
-            file_key (str): S3 file key being processed
-        """
-        while True:
-            try:
-                batch = self._batch_queue.get_nowait()
-                if batch is None:  # Poison pill to stop the worker
-                    break
-                
-                self._process_batch(batch, index_name, file_key)
-                self._batch_queue.task_done()
-                
-            except Queue.Empty:
-                break
-
-    def _create_document(self, row: pd.Series) -> Dict[str, Any]:
-        """
-        Create a document from CSV row.
-        
-        Args:
-            row (pd.Series): CSV row to convert to a document
-            
-        Returns:
-            Dict[str, Any]: Document ready for indexing
-        """
-        document = {}
-        for column in row.index:
-            value = row[column]
-            
-            # Handle empty values
-            if pd.isna(value):
-                value = None
-            # Handle numeric values
-            elif pd.api.types.is_numeric_dtype(type(value)):
-                value = float(value)
-            # Handle boolean values
-            elif isinstance(value, bool):
-                value = value
-            # Handle string values
-            else:
-                value = str(value).strip()
-            
-            document[column] = value
-        
-        return document
 
     def _verify_document_count(self, index_name: str, expected_count: int) -> dict:
         """
@@ -221,370 +108,91 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                 logger.info(f"Document count verification - Expected: {expected_count}, Actual: {actual_count}")
                 
                 if actual_count == expected_count:
+                    logger.info(f"Document count verification successful: {actual_count} documents match expected count")
                     return {
                         "status": "success",
-                        "documents_indexed": actual_count
+                        "documents_indexed": actual_count,
+                        "expected_count": expected_count,
+                        "actual_count": actual_count
                     }
                 
                 logger.warning(f"Document count mismatch on attempt {attempt + 1}/{max_retries}")
+                logger.warning(f"Expected: {expected_count}, Actual: {actual_count}, Difference: {actual_count - expected_count}")
+                
                 if attempt < max_retries - 1:
+                    logger.info(f"Retrying verification in {retry_delay} seconds...")
                     time.sleep(retry_delay)
-            except Exception as e:
+            except (requests.exceptions.RequestException, ValueError, KeyError) as e:
                 logger.error(f"Error getting document count on attempt {attempt + 1}: {str(e)}")
                 if attempt < max_retries - 1:
+                    logger.info(f"Retrying verification in {retry_delay} seconds...")
                     time.sleep(retry_delay)
                     continue
                 return {
                     "status": "error",
-                    "message": f"Failed to get document count after {max_retries} attempts: {str(e)}"
+                    "message": f"Failed to get document count after {max_retries} attempts: {str(e)}",
+                    "expected_count": expected_count,
+                    "actual_count": None
                 }
         
         return {
             "status": "error",
             "message": f"Document count mismatch after {max_retries} attempts",
             "expected_count": expected_count,
-            "actual_count": actual_count
+            "actual_count": actual_count,
+            "difference": actual_count - expected_count
         }
 
-    def process_s3_file(self, bucket: str, key: str, index_name: str) -> int:
+    def _process_files(self, all_files: List[Dict[str, Any]], index_name: str) -> Tuple[int, int]:
         """
-        Process a single S3 file and return number of processed rows.
+        Process a list of files and return total rows and files processed.
         
         Args:
-            bucket (str): S3 bucket name
-            key (str): S3 object key
-            index_name (str): Name of the target index
+            all_files (List[Dict[str, Any]]): List of files to process
+            index_name (str): Target index name
             
         Returns:
-            int: Number of rows processed
+            Tuple[int, int]: (total_rows, total_files)
+            
+        Raises:
+            OpenSearchException: If there's an error processing any file
         """
-        file_start_time = time.time()
-        try:
-            logger.info(f"Processing file: {key}")
-            response = self.s3_client.get_object(Bucket=bucket, Key=key)
-            content = response['Body'].read().decode('utf-8')
-            
-            # Read CSV using pandas
-            df = pd.read_csv(StringIO(content))
-            logger.info(f"Found {len(df.columns)} columns in file: {key}")
-            
-            batch = []
-            row_count = 0
-            
-            # Reset processed count
-            self._processed_count = 0
-            batch_count = 0
-            # Create thread pool for batch processing
-            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                futures = []
-                
-                for _, row in df.iterrows():
-                    row_count += 1
-                    try:
-                        document = self._create_document(row)
-                        batch.append(document)
-                        
-                        if len(batch) >= self.batch_size:
-                            batch_count += 1
-                            logger.info(f"Batch {batch_count} created with {len(batch)} documents")
-                            self._batch_queue.put(batch.copy())
-                            batch = []
-                            # Add a small delay between batches to prevent overwhelming the cluster
-                            time.sleep(0.1)
-                            
-                    except Exception as e:
-                        logger.error(f"Error processing row {row_count} in file {key}: {str(e)}")
-                
-                # Process remaining documents
-                if batch:
-                    self._batch_queue.put(batch)
-                
-                # Add poison pills to stop workers
-                for _ in range(self.max_workers):
-                    logger.info(f"Adding poison pill {_} to queue")
-                    self._batch_queue.put(None)
-                
-                # Start worker threads
-                for _ in range(self.max_workers):
-                    logger.info(f"Adding worker thread {_} to executor")
-                    futures.append(
-                        executor.submit(self._process_batch_worker, index_name, key)
-                    )
-                
-                # Wait for all workers to complete
-                for future in as_completed(futures):
-                    try:
-                        future.result()
-                    except Exception as e:
-                        logger.error(f"Worker thread error: {str(e)}")
-            
-            file_time = time.time() - file_start_time
-            logger.info(f"Completed processing file {key} in {file_time:.2f} seconds")
-            return self._processed_count
-            
-        except Exception as e:
-            logger.error(f"Error processing file {key}: {str(e)}")
-            return 0
-
-    def process_local_file(self, file_path: str, index_name: str) -> int:
-        """
-        Process a local CSV file and return number of processed rows.
-        
-        Args:
-            file_path (str): Path to the local CSV file
-            index_name (str): Name of the target index
-            
-        Returns:
-            int: Number of rows processed
-        """
-        file_start_time = time.time()
-        try:
-            logger.info(f"Processing local file: {file_path}")
-            
-            # Read CSV using pandas
-            df = pd.read_csv(file_path)
-            logger.info(f"Found {len(df.columns)} columns in file: {file_path}")
-            
-            batch = []
-            row_count = 0
-            
-            # Reset processed count
-            self._processed_count = 0
-            batch_count = 0
-            # Create thread pool for batch processing
-            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                futures = []
-                
-                for _, row in df.iterrows():
-                    row_count += 1
-                    try:
-                        document = self._create_document(row)
-                        batch.append(document)
-                        
-                        if len(batch) >= self.batch_size:
-                            batch_count += 1
-                            logger.info(f"Batch {batch_count} created with {len(batch)} documents")
-                            self._batch_queue.put(batch.copy())
-                            batch = []
-                            # Add a small delay between batches to prevent overwhelming the cluster
-                            time.sleep(0.1)
-                            
-                    except Exception as e:
-                        logger.error(f"Error processing row {row_count} in file {file_path}: {str(e)}")
-                
-                # Process remaining documents
-                if batch:
-                    self._batch_queue.put(batch)
-                
-                # Add poison pills to stop workers
-                for _ in range(self.max_workers):
-                    logger.info(f"Adding poison pill {_} to queue")
-                    self._batch_queue.put(None)
-                
-                # Start worker threads
-                for _ in range(self.max_workers):
-                    logger.info(f"Adding worker thread {_} to executor")
-                    futures.append(
-                        executor.submit(self._process_batch_worker, index_name, file_path)
-                    )
-                
-                # Wait for all workers to complete
-                for future in as_completed(futures):
-                    try:
-                        future.result()
-                    except Exception as e:
-                        logger.error(f"Worker thread error: {str(e)}")
-            
-            file_time = time.time() - file_start_time
-            logger.info(f"Completed processing file {file_path} in {file_time:.2f} seconds")
-            return self._processed_count
-            
-        except Exception as e:
-            logger.error(f"Error processing file {file_path}: {str(e)}")
-            return 0
-
-    def process_local_json_file(self, file_path: str, index_name: str) -> int:
-        """
-        Process a local JSON file and return number of processed rows.
-        
-        Args:
-            file_path (str): Path to the local JSON file
-            index_name (str): Name of the target index
-            
-        Returns:
-            int: Number of rows processed
-        """
-        file_start_time = time.time()
-        try:
-            logger.info(f"Processing local JSON file: {file_path}")
-            
-            # Read JSON file
-            with open(file_path, 'r') as f:
-                data = json.load(f)
-            
-            # Handle both single object and array of objects
-            if isinstance(data, dict):
-                data = [data]
-            
-            logger.info(f"Found {len(data)} records in JSON file: {file_path}")
-            
-            batch = []
-            row_count = 0
-            
-            # Reset processed count
-            self._processed_count = 0
-            batch_count = 0
-            # Create thread pool for batch processing
-            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                futures = []
-                
-                for item in data:
-                    row_count += 1
-                    try:
-                        # For JSON, we can use the item directly as a document
-                        document = item
-                        batch.append(document)
-                        
-                        if len(batch) >= self.batch_size:
-                            batch_count += 1
-                            logger.info(f"Batch {batch_count} created with {len(batch)} documents")
-                            self._batch_queue.put(batch.copy())
-                            batch = []
-                            # Add a small delay between batches to prevent overwhelming the cluster
-                            time.sleep(0.1)
-                            
-                    except Exception as e:
-                        logger.error(f"Error processing record {row_count} in file {file_path}: {str(e)}")
-                
-                # Process remaining documents
-                if batch:
-                    self._batch_queue.put(batch)
-                
-                # Add poison pills to stop workers
-                for _ in range(self.max_workers):
-                    logger.info(f"Adding poison pill {_} to queue")
-                    self._batch_queue.put(None)
-                
-                # Start worker threads
-                for _ in range(self.max_workers):
-                    logger.info(f"Adding worker thread {_} to executor")
-                    futures.append(
-                        executor.submit(self._process_batch_worker, index_name, file_path)
-                    )
-                
-                # Wait for all workers to complete
-                for future in as_completed(futures):
-                    try:
-                        future.result()
-                    except Exception as e:
-                        logger.error(f"Worker thread error: {str(e)}")
-            
-            file_time = time.time() - file_start_time
-            logger.info(f"Completed processing file {file_path} in {file_time:.2f} seconds")
-            return self._processed_count
-            
-        except Exception as e:
-            logger.error(f"Error processing file {file_path}: {str(e)}")
-            return 0
-
-    def process_local_folder(self, folder_path: str, index_name: str) -> Dict[str, Any]:
-        """
-        Process all CSV and JSON files in a local folder.
-        
-        Args:
-            folder_path (str): Path to the local folder containing CSV or JSON files
-            index_name (str): Name of the target index
-            
-        Returns:
-            Dict[str, Any]: Result containing status and details
-        """
-        start_time = time.time()
         total_rows = 0
         total_files = 0
-        processed_files = []
-        skipped_files = []
         
-        try:
-            # Normalize the folder path to handle both relative and absolute paths
-            folder_path = os.path.abspath(folder_path)
-            logger.info(f"Processing all files in folder: {folder_path}")
+        if not all_files:
+            logger.warning(NO_FILES_MESSAGE)
+            return total_rows, total_files
             
-            # Check if folder exists
-            if not os.path.isdir(folder_path):
-                error_msg = f"Folder does not exist: {folder_path}"
-                logger.error(error_msg)
-                return {
-                    "status": "error",
-                    "message": error_msg
+        logger.info(f"Processing {len(all_files)} files in total")
+        for file_info in all_files:
+            # Handle both string and dictionary file_info formats
+            if isinstance(file_info, str):
+                file_identifier = file_info
+                file_info_dict = {
+                    "file_path": file_info,
+                    "type": "json" if file_info.lower().endswith('.json') else "csv"
                 }
-            
-            # Get all files in the folder
-            all_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) 
-                        if os.path.isfile(os.path.join(folder_path, f))]
-            
-            # Filter for CSV and JSON files
-            csv_files = [f for f in all_files if f.lower().endswith('.csv')]
-            json_files = [f for f in all_files if f.lower().endswith('.json')]
-            
-            logger.info(f"Found {len(csv_files)} CSV files and {len(json_files)} JSON files in folder {folder_path}")
-            
-            # Process CSV files
-            for file_path in csv_files:
-                try:
-                    total_files += 1
-                    logger.info(f"Processing local CSV file {total_files}: {file_path}")
-                    rows_processed = self.process_local_file(file_path, index_name)
-                    total_rows += rows_processed
-                    processed_files.append(file_path)
-                    logger.info(f"Processed {rows_processed} rows from {file_path}")
-                except Exception as e:
-                    logger.error(f"Error processing file {file_path}: {str(e)}")
-                    skipped_files.append(file_path)
-            
-            # Process JSON files
-            for file_path in json_files:
-                try:
-                    total_files += 1
-                    logger.info(f"Processing local JSON file {total_files}: {file_path}")
-                    rows_processed = self.process_local_json_file(file_path, index_name)
-                    total_rows += rows_processed
-                    processed_files.append(file_path)
-                    logger.info(f"Processed {rows_processed} records from {file_path}")
-                except Exception as e:
-                    logger.error(f"Error processing file {file_path}: {str(e)}")
-                    skipped_files.append(file_path)
-            
-            end_time = time.time()
-            total_time = end_time - start_time
-            
-            success_msg = f"Successfully processed {total_rows} rows from {len(processed_files)} files in folder {folder_path}"
-            logger.info(success_msg)
-            logger.info(f"Total time taken: {round(total_time, 2)} seconds")
-            
-            return {
-                "status": "success",
-                "total_rows_processed": total_rows,
-                "total_files_processed": len(processed_files),
-                "processed_files": processed_files,
-                "skipped_files": skipped_files,
-                "total_time_seconds": round(total_time, 2),
-                "average_time_per_file": round(total_time / len(processed_files), 2) if processed_files else 0
-            }
-            
-        except Exception as e:
-            error_msg = f"Error processing folder {folder_path}: {str(e)}"
-            logger.error(error_msg)
-            return {
-                "status": "error",
-                "message": error_msg,
-                "total_rows_processed": total_rows,
-                "total_files_processed": total_files,
-                "processed_files": processed_files,
-                "skipped_files": skipped_files
-            }
+            else:
+                file_identifier = file_info.get("file_path", f"{file_info.get('bucket', '')}/{file_info.get('key', '')}")
+                file_info_dict = file_info
+                
+            try:
+                total_files += 1
+                rows_processed = self.file_processor.process_file(file_info_dict, index_name, self._make_request)
+                total_rows += rows_processed
+                with self._lock:
+                    self._processed_count += rows_processed
+                logger.info(f"Processed {rows_processed} rows from {file_identifier}")
+            except Exception as e:
+                logger.error(f"Error processing file {file_identifier}: {str(e)}")
+                raise OpenSearchException(f"Error processing file {file_identifier}: {str(e)}")
+                
+        return total_rows, total_files
 
     def ingest_data(self, bucket: Optional[str] = None, prefix: Optional[str] = None, 
-                    local_files: Optional[List[str]] = None, index_name: str = None) -> Dict[str, Any]:
+                    local_files: Optional[List[str]] = None, local_folder: Optional[str] = None,
+                    index_name: str = None) -> Dict[str, Any]:
         """
         Ingest data from CSV or JSON files into OpenSearch.
         
@@ -594,17 +202,51 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             bucket (str, optional): S3 bucket name
             prefix (str, optional): S3 prefix to filter files
             local_files (List[str], optional): List of local CSV or JSON file paths
+            local_folder (str, optional): Path to a folder containing CSV or JSON files
             index_name (str): Name of the target index
             
         Returns:
             Dict[str, Any]: Result containing status and details
         """
         start_time = time.time()
-        total_rows = 0
-        total_files = 0
+        all_files = []
         
         try:
             logger.info(f"Starting data ingestion to index: {index_name}")
+            self._processed_count = 0
+            
+            # Process local folder if provided
+            if local_folder:
+                folder_result = self.file_processor.process_local_folder(local_folder)
+                if folder_result["status"] == "error":
+                    return folder_result
+                if "files" in folder_result:
+                    all_files.extend(folder_result["files"])
+            
+            # Process local files if provided
+            if local_files:
+                for file_path in local_files:
+                    file_type = "csv" if file_path.lower().endswith('.csv') else "json"
+                    all_files.append({"file_path": file_path, "type": file_type})
+            
+            # Process S3 files if bucket and prefix are provided
+            if bucket and prefix:
+                s3_result = self.file_processor.process_s3_files(bucket, prefix)
+                if s3_result["status"] == "error":
+                    return s3_result
+                if "files" in s3_result:
+                    all_files.extend(s3_result["files"])
+            
+            # Check if there are any files to process
+            if not all_files:
+                logger.warning(NO_FILES_MESSAGE)
+                return {
+                    "status": "warning",
+                    "message": NO_FILES_MESSAGE,
+                    "total_rows_processed": 0,
+                    "total_files_processed": 0,
+                    "total_time_seconds": round(time.time() - start_time, 2)
+                }
             
             # Validate and cleanup target index
             logger.info(f"Validating and cleaning up index: {index_name}")
@@ -613,78 +255,44 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                 logger.error(f"Index cleanup failed: {cleanup_result['message']}")
                 return cleanup_result
             
-            # Process local files if provided
-            if local_files:
-                logger.info(f"Processing {len(local_files)} local files")
-                for file_path in local_files:
-                    if file_path.endswith('.csv'):
-                        total_files += 1
-                        logger.info(f"Processing local CSV file {total_files}: {file_path}")
-                        rows_processed = self.process_local_file(file_path, index_name)
-                        total_rows += rows_processed
-                        logger.info(f"Processed {rows_processed} rows from {file_path}")
-                    elif file_path.endswith('.json'):
-                        total_files += 1
-                        logger.info(f"Processing local JSON file {total_files}: {file_path}")
-                        rows_processed = self.process_local_json_file(file_path, index_name)
-                        total_rows += rows_processed
-                        logger.info(f"Processed {rows_processed} records from {file_path}")
-                    else:
-                        logger.warning(f"Skipping unsupported file format: {file_path}")
+            # Process all files
+            total_rows, total_files = self._process_files(all_files, index_name)
             
-            # Process S3 files if bucket and prefix are provided
-            if bucket and prefix:
-                logger.info(f"Processing files from S3 bucket: {bucket}, prefix: {prefix}")
-                # List objects in S3 bucket with prefix
-                paginator = self.s3_client.get_paginator('list_objects_v2')
-                for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-                    if 'Contents' not in page:
-                        logger.warning(f"No objects found in bucket {bucket} with prefix {prefix}")
-                        continue
+            # Verify document count
+            try:
+                verification_result = self._verify_document_count(index_name, self._processed_count)
+                
+                if verification_result["status"] == "error":
+                    return {
+                        "status": "error",
+                        "message": verification_result["message"],
+                        "total_rows_processed": total_rows,
+                        "total_files_processed": total_files,
+                        "expected_documents": verification_result["expected_count"],
+                        "actual_documents": verification_result["actual_count"],
+                        "total_time_seconds": round(time.time() - start_time, 2)
+                    }
                     
-                    for obj in page['Contents']:
-                        key = obj['Key']
-                        if not key.endswith('.csv'):
-                            logger.debug(f"Skipping non-CSV file: {key}")
-                            continue
-                        
-                        total_files += 1
-                        logger.info(f"Processing S3 file {total_files}: {key}")
-                        rows_processed = self.process_s3_file(bucket, key, index_name)
-                        total_rows += rows_processed
-                        logger.info(f"Processed {rows_processed} rows from {key}")
-            
-            # Verify document count with retries
-            verification_result = self._verify_document_count(index_name, total_rows)
-            
-            if verification_result["status"] == "error":
-                logger.error(f"Record count verification failed: {verification_result['message']}")
+                total_time = time.time() - start_time
                 return {
-                    "status": "error",
-                    "message": verification_result["message"],
+                    "status": "success",
                     "total_rows_processed": total_rows,
                     "total_files_processed": total_files,
-                    "expected_documents": verification_result["expected_count"],
-                    "actual_documents": verification_result["actual_count"],
+                    "documents_indexed": verification_result["documents_indexed"],
+                    "total_time_seconds": round(total_time, 2),
+                    "average_time_per_file": round(total_time / total_files, 2) if total_files > 0 else 0,
+                    "files_processed": total_rows > 0
+                }
+                
+            except Exception as e:
+                logger.error(f"Error verifying document count: {str(e)}")
+                return {
+                    "status": "error",
+                    "message": f"Error verifying document count: {str(e)}",
+                    "total_rows_processed": total_rows,
+                    "total_files_processed": total_files,
                     "total_time_seconds": round(time.time() - start_time, 2)
                 }
-            
-            end_time = time.time()
-            total_time = end_time - start_time
-            
-            success_msg = f"Successfully processed {total_rows} rows from {total_files} files"
-            logger.info(success_msg)
-            logger.info(f"Total time taken: {round(total_time, 2)} seconds")
-            
-            return {
-                "status": "success",
-                "total_rows_processed": total_rows,
-                "total_files_processed": total_files,
-                "documents_indexed": verification_result["documents_indexed"],
-                "total_time_seconds": round(total_time, 2),
-                "average_time_per_file": round(total_time / total_files, 2) if total_files > 0 else 0,
-                "files_processed": total_rows > 0
-            }
             
         except Exception as e:
             error_msg = f"Error during data ingestion: {str(e)}"
@@ -730,27 +338,12 @@ def main():
             max_workers=args.max_workers
         )
         
-        # Process local folder if provided
-        if args.local_folder:
-            folder_result = ingestion_service.process_local_folder(args.local_folder, args.index)
-            if folder_result["status"] == "error":
-                logger.error(f"Failed to process folder: {folder_result['message']}")
-                return 1
-            
-            logger.info(f"Successfully processed {folder_result['total_rows_processed']} rows from {folder_result['total_files_processed']} files in folder {args.local_folder}")
-            logger.info(f"Total time taken: {folder_result['total_time_seconds']} seconds")
-            logger.info(f"Average time per file: {folder_result['average_time_per_file']} seconds")
-            
-            if folder_result['skipped_files']:
-                logger.warning(f"Skipped {len(folder_result['skipped_files'])} files due to errors")
-            
-            return 0
-        
         # Start ingestion with command line arguments
         result = ingestion_service.ingest_data(
             bucket=args.bucket,
             prefix=args.prefix,
             local_files=args.local_files,
+            local_folder=args.local_folder,
             index_name=args.index
         )
         
@@ -780,9 +373,9 @@ if __name__ == "__main__":
     main()
 
 # Example usage:
-# python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index my_index_primary --batch-size 1000 --max-workers 8
-# python bulkupdate.py --local-files data1.csv data2.csv --index my_index_primary --batch-size 1000 --max-workers 8
-# python bulkupdate.py --local-files data1.json data2.json --index my_index_primary --batch-size 1000 --max-workers 8
-# python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --local-files data1.csv data2.json --index my_index_primary --batch-size 1000 --max-workers 8
+# python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index member_index_primary --batch-size 1000 --max-workers 2
+# python bulkupdate.py --local-files member_data.csv member_data.json --index member_index_primary --batch-size 1000 --max-workers 2
+# python bulkupdate.py --local-files data1.json data2.json --index my_index_primary --batch-size 1000 --max-workers 2
+# python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --local-files data1.csv data2.json --index my_index_primary --batch-size 1000 --max-workers 2
 # python bulkupdate.py --local-folder ./testdata/member_data --index my_index_primary --batch-size 1000 --max-workers 2
 

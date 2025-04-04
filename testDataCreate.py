@@ -244,6 +244,6 @@ if __name__ == "__main__":
     else:  # json
         generate_json_data(args.records, f"{args.output}.json", args.single_file)
 
-# python testDataCreate.py --format json --records 100 --output testdata/member_data --single-file
+# python testDataCreate.py --format json --records 100 --output testdata/member_data2 --single-file
 # python testDataCreate.py --format csv --records 100 --output testdata/member_data
 

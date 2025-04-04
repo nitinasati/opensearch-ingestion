@@ -76,15 +76,24 @@ class OpenSearchReindexManager(OpenSearchBaseManager):
                 }
             }
             
-            response = self._make_request(
+            result = self._make_request(
                 'POST',
                 '/_reindex',
                 data=reindex_body
             )
             
+            if result['status'] == 'error':
+                error_msg = f"Failed to reindex: {result['message']}"
+                logger.error(error_msg)
+                return {
+                    "status": "error",
+                    "message": error_msg
+                }
+            
+            response = result['response']
             if response.status_code == 200:
-                result = response.json()
-                total_docs = result.get('total', 0)
+                result_data = response.json()
+                total_docs = result_data.get('total', 0)
                 logger.info(f"Successfully reindexed {total_docs} documents")
                 return {
                     "status": "success",
