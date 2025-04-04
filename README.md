@@ -62,11 +62,29 @@ For development or testing environments, you can use basic authentication:
 
 1. Create a `.env` file in the project root with the following variables:
 ```
-OPENSEARCH_ENDPOINT=your_opensearch_endpoint
-OPENSEARCH_USERNAME=your_username
-OPENSEARCH_PASSWORD=your_password
-AWS_REGION=your_aws_region
-USE_BACKEND_ROLE=false
+# OpenSearch Configuration
+OPENSEARCH_ENDPOINT=<opensearch-endpoint>
+AWS_REGION=<aws-region>
+
+# AWS IAM Role Configuration
+AWS_PROFILE=default  # Optional: specify AWS profile if using multiple profiles
+AWS_ROLE_ARN=<aws-role-arn>  # Optional: specify role ARN if using role assumption
+
+# Performance Configuration
+BATCH_SIZE=<batch-size>
+MAX_WORKERS=<max-workers>
+INDEX_RECREATE_THRESHOLD=<index-recreate-threshold>
+
+# Logging Configuration
+LOG_LEVEL=INFO
+LOG_FORMAT=%(asctime)s - %(name)s - %(levelname)s - %(message)s
+
+# SSL Configuration
+VERIFY_SSL=<verify-ssl>  # Set to true in production
+
+# Optional environment variables
+DOCUMENT_COUNT_THRESHOLD=<document-count-threshold>  # Percentage difference threshold for alias switch operation to avoid alias switch when document count is 0 in target index
+
 ```
 
 ## Usage
@@ -76,27 +94,25 @@ USE_BACKEND_ROLE=false
 The `bulkupdate.py` script processes CSV files from S3 and ingests them into OpenSearch with parallel processing support.
 
 ```bash
-python bulkupdate.py --bucket <bucket_name> --prefix <prefix> --index <index_name> [options]
+python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index my_index_primary --batch-size 1000 --max-workers 8
 ```
 
-#### Required Arguments:
-- `--bucket`: S3 bucket name containing CSV files
-- `--prefix`: S3 prefix to filter files
-- `--index`: OpenSearch index name for ingestion
-
-#### Optional Arguments:
-- `--batch-size`: Number of documents to process in each batch (default: 10000)
-- `--max-workers`: Maximum number of parallel threads for processing (default: 4)
-
-#### Example:
+#### Additional Examples:
 ```bash
-python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index my_index_primary --batch-size 1000 --max-workers 8
-# Example usage:
-# python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index member_index_primary --batch-size 1000 --max-workers 2
-# python bulkupdate.py --local-files member_data.csv member_data.json --index member_index_primary --batch-size 1000 --max-workers 2
-# python bulkupdate.py --local-files data1.json data2.json --index my_index_primary --batch-size 1000 --max-workers 2
-# python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --local-files data1.csv data2.json --index my_index_primary --batch-size 1000 --max-workers 2
-# python bulkupdate.py --local-folder ./testdata/member_data --index my_index_primary --batch-size 1000 --max-workers 2
+# Process files from S3 bucket
+python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index member_index_primary --batch-size 1000 --max-workers 2
+
+# Process local CSV and JSON files
+python bulkupdate.py --local-files member_data.csv member_data.json --index member_index_primary --batch-size 1000 --max-workers 2
+
+# Process multiple JSON files
+python bulkupdate.py --local-files data1.json data2.json --index my_index_primary --batch-size 1000 --max-workers 2
+
+# Process files from both S3 and local sources
+python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --local-files data1.csv data2.json --index my_index_primary --batch-size 1000 --max-workers 2
+
+# Process all files in a local folder
+python bulkupdate.py --local-folder ./testdata/member_data --index my_index_primary --batch-size 1000 --max-workers 2
 ```
 
 ### Alias Management
@@ -263,19 +279,6 @@ Before running in production, perform rigorous testing:
    - Monitor bulk request size carefully
 
 ### Environment Variables
-
-Configure these in your `.env` file:
-
-```
-OPENSEARCH_ENDPOINT=/opensearch/endpoint
-OPENSEARCH_USERNAME=/opensearch/username
-OPENSEARCH_PASSWORD=/opensearch/password
-AWS_REGION=us-east-1
-INDEX_RECREATE_THRESHOLD=1000000  # Threshold for recreating index
-LOG_LEVEL=INFO
-LOG_FORMAT='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-DOCUMENT_COUNT_THRESHOLD=10  # Percentage threshold for document count differences
-```
 
 ## Error Handling
 
