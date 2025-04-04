@@ -45,7 +45,7 @@ Write-Log "Starting OpenSearch ingestion process..."
 # Step 1: Copy Primary Index to Secondary
 Write-Log "Step 1: Copying Primary Index to Secondary"
 $step1StartTime = Get-Date
-python reindex.py --source my_index_primary --target my_index_secondary
+python reindex.py --source member_index_primary --target member_index_secondary
 if (-not (Test-CommandSuccess $LASTEXITCODE)) {
     Write-Log "Error: Failed to copy primary index to secondary"
     exit 1
@@ -59,7 +59,7 @@ Start-Sleep -Seconds 5
 # Step 2: Switch Alias to Secondary
 Write-Log "Step 2: Switching Alias to Secondary"
 $step2StartTime = Get-Date
-python switch_alias.py --alias my_index_alias --source my_index_primary --target my_index_secondary
+python switch_alias.py --alias member_index_alias --source member_index_primary --target member_index_secondary
 if (-not (Test-CommandSuccess $LASTEXITCODE)) {
     Write-Log "Error: Failed to switch alias to secondary"
     exit 1
@@ -73,7 +73,7 @@ Start-Sleep -Seconds 5
 # Step 3: Bulk Update Primary Index
 Write-Log "Step 3: Bulk Updating Primary Index"
 $step3StartTime = Get-Date
-python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index my_index_primary --batch-size 1000
+python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index member_index_primary --batch-size 1000
 if (-not (Test-CommandSuccess $LASTEXITCODE)) {
     Write-Log "Error: Failed to bulk update primary index"
     exit 1
@@ -87,7 +87,7 @@ Start-Sleep -Seconds 5
 # Step 4: Switch Alias back to Primary
 Write-Log "Step 4: Switching Alias back to Primary"
 $step4StartTime = Get-Date
-python switch_alias.py --alias my_index_alias --source my_index_secondary --target my_index_primary
+python switch_alias.py --alias member_index_alias --source member_index_secondary --target member_index_primary
 if (-not (Test-CommandSuccess $LASTEXITCODE)) {
     Write-Log "Error: Failed to switch alias back to primary"
     exit 1

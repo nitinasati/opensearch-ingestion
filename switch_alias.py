@@ -67,11 +67,20 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
             Dict[str, Any]: Alias information
         """
         try:
-            response = self._make_request('GET', f'/_alias/{alias_name}')
-            return response.json()
+            result = self._make_request('GET', f'/_alias/{alias_name}')
+            if result['status'] == 'error':
+                logger.error(f"Error getting alias info: {result['message']}")
+                return {}
+            
+            response = result['response']
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.error(f"Error getting alias info. Status code: {response.status_code}")
+                return {}
         except Exception as e:
             logger.error(f"Error getting alias info: {str(e)}")
-            raise
+            return {}
 
     def _create_alias(self, alias_name: str, index_name: str) -> Dict[str, Any]:
         """
@@ -310,12 +319,21 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
             
             # Execute alias update
             logger.info("Executing alias switch operation")
-            response = self._make_request(
+            result = self._make_request(
                 'POST',
                 f'/_aliases',
                 data=alias_body
             )
             
+            if result['status'] == 'error':
+                error_msg = f"Failed to switch alias: {result['message']}"
+                logger.error(error_msg)
+                return {
+                    "status": "error",
+                    "message": error_msg
+                }
+            
+            response = result['response']
             if response.status_code != 200:
                 error_msg = f"Failed to switch alias. Status code: {response.status_code}"
                 logger.error(error_msg)
