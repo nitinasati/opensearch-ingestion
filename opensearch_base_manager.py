@@ -335,7 +335,7 @@ class OpenSearchBaseManager:
         """
         try:
             # Delete all documents using _delete_by_query
-            response = self._make_request(
+            result = self._make_request(
                 'POST',
                 f'/{index_name}/_delete_by_query',
                 data={
@@ -344,19 +344,27 @@ class OpenSearchBaseManager:
                     }
                 }
             )
+            logger.info(f"Response: {result}")
             
+            if result['status'] == 'error':
+                return {
+                    "status": "error",
+                    "message": f"Failed to delete documents: {result['message']}"
+                }
+                
+            response = result['response']
             if response.status_code == 200:
-                result = response.json()
-                deleted_count = result.get('deleted', 0)
+                response_data = response.json()
+                deleted_count = response_data.get('deleted', 0)
                 logger.info(f"Successfully deleted {deleted_count} documents from index {index_name}")
                 
                 # Force merge to remove deleted documents
-                merge_response = self._make_request(
+                merge_result = self._make_request(
                     'POST',
                     f'/{index_name}/_forcemerge'
                 )
                 
-                if merge_response.status_code == 200:
+                if merge_result['status'] == 'success' and merge_result['response'].status_code == 200:
                     logger.info(f"Successfully force merged index {index_name}")
                 else:
                     logger.warning(f"Force merge failed for index {index_name}")
