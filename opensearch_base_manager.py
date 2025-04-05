@@ -21,9 +21,6 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# Disable SSL verification warnings
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 class OpenSearchException(Exception):
     """Custom exception for OpenSearch operations."""
     pass
@@ -36,21 +33,19 @@ class OpenSearchBaseManager:
     # Content type constant
     CONTENT_TYPE_JSON = 'application/json'
     
-    def __init__(self, opensearch_endpoint: Optional[str] = None, 
-                 verify_ssl: bool = False):
+    def __init__(self, opensearch_endpoint: Optional[str] = None):
         """
         Initialize the OpenSearch base manager.
         
         Args:
             opensearch_endpoint (str, optional): The OpenSearch cluster endpoint URL
-            verify_ssl (bool): Whether to verify SSL certificates
             
         Raises:
             ValueError: If OpenSearch endpoint is not provided
             OpenSearchException: If connection to OpenSearch fails after maximum retries
         """
         self.opensearch_endpoint = opensearch_endpoint or os.getenv('OPENSEARCH_ENDPOINT')
-        self.verify_ssl = verify_ssl
+        self.verify_ssl = os.getenv('VERIFY_SSL', 'false').lower() == 'true'
         
         if not self.opensearch_endpoint:
             raise ValueError("OpenSearch endpoint is required")
@@ -63,6 +58,7 @@ class OpenSearchBaseManager:
         
         logger.info(f"Initializing OpenSearch connection with endpoint: {self.opensearch_endpoint}")
         logger.info(f"Using AWS region: {self.aws_region}")
+        logger.info(f"Using SSL verification: {self.verify_ssl} (from VERIFY_SSL environment variable)")
         
         # Initialize AWS session and auth
         self.session = boto3.Session()
@@ -344,8 +340,7 @@ class OpenSearchBaseManager:
                     }
                 }
             )
-            logger.info(f"Response: {result}")
-            
+                        
             if result['status'] == 'error':
                 return {
                     "status": "error",

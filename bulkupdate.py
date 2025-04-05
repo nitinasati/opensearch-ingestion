@@ -62,18 +62,17 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
     """
     
     def __init__(self, batch_size: int = 10000, opensearch_endpoint: Optional[str] = None, 
-                 verify_ssl: bool = False, max_workers: int = 4):
+                 max_workers: int = 4):
         """
         Initialize the bulk ingestion manager.
         
         Args:
             batch_size (int): Number of documents to process in each batch
             opensearch_endpoint (str, optional): The OpenSearch cluster endpoint URL
-            verify_ssl (bool): Whether to verify SSL certificates
             max_workers (int): Maximum number of parallel threads for processing
         """
         # Initialize parent class
-        super().__init__(opensearch_endpoint=opensearch_endpoint, verify_ssl=verify_ssl)
+        super().__init__(opensearch_endpoint=opensearch_endpoint)
         
         # Initialize instance attributes
         self.batch_size = batch_size
@@ -84,102 +83,93 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
         
         # Initialize clients and processors
         self.s3_client = boto3.client('s3')
-        self.index_manager = OpenSearchIndexManager(opensearch_endpoint=opensearch_endpoint, verify_ssl=verify_ssl)
+        self.index_manager = OpenSearchIndexManager(opensearch_endpoint=opensearch_endpoint)
         self.file_processor = FileProcessor(batch_size=batch_size, max_workers=max_workers)
         
         logger.info(f"Initialized OpenSearchBulkIngestion with batch_size: {batch_size}, max_workers: {max_workers}")
 
     def _verify_document_count(self, index_name: str, expected_count: int, resume: bool = False, initial_count: int = 0) -> Dict[str, Any]:
         """
-        Verify the document count in the target index.
+        Verify that the document count matches the expected count.
         
         Args:
-            index_name (str): Name of the target index
+            index_name (str): Name of the index
             expected_count (int): Expected number of documents
             resume (bool): Whether we're in resume mode
+            initial_count (int): Initial document count (used in resume mode)
             
         Returns:
             dict: Verification result containing status and details
         """
-        max_retries = 3
-        retry_delay = 5
-        
         # In resume mode, we need to track the initial count and verify the difference
-      
-        
-        for attempt in range(max_retries):
+        if resume:
+            # In resume mode, we verify the difference between final and initial count
             try:
-                actual_count = self._get_index_count(index_name)
+                # Use the processed count from the FileProcessor
+                new_documents = self.file_processor._processed_count_from_bulk
+                logger.info(f"Document count verification (resume mode) - Expected new documents: {expected_count}, Actual new documents: {new_documents}")
                 
-                if resume:
-                    # In resume mode, we verify the difference between final and initial count
-                    new_documents = actual_count - initial_count
-                    logger.info(f"Document count verification (resume mode) - Expected new documents: {expected_count}, Actual new documents: {new_documents}")
-                    
-                    if new_documents == expected_count:
-                        logger.info(f"Document count verification successful: {new_documents} new documents match expected count")
-                        return {
-                            "status": "success",
-                            "documents_indexed": new_documents,
-                            "expected_count": expected_count,
-                            "actual_count": new_documents,
-                            "total_count": actual_count,
-                            "initial_count": initial_count
-                        }
-                    
-                    logger.warning(f"Document count mismatch on attempt {attempt + 1}/{max_retries}")
-                    logger.warning(f"Expected new documents: {expected_count}, Actual new documents: {new_documents}, Difference: {new_documents - expected_count}")
+                if new_documents == expected_count:
+                    logger.info(f"Document count verification successful: {new_documents} new documents match expected count")
+                    return {
+                        "status": "success",
+                        "message": f"Document count verification successful: {new_documents} new documents match expected count",
+                        "expected_count": expected_count,
+                        "actual_count": new_documents,
+                        "documents_indexed": new_documents
+                    }
                 else:
-                    # In fresh load mode, we verify the total count
-                    logger.info(f"Document count verification - Expected: {expected_count}, Actual: {actual_count}")
-                    
-                    if actual_count == expected_count:
-                        logger.info(f"Document count verification successful: {actual_count} documents match expected count")
-                        return {
-                            "status": "success",
-                            "documents_indexed": actual_count,
-                            "expected_count": expected_count,
-                            "actual_count": actual_count
-                        }
-                    
-                    logger.warning(f"Document count mismatch on attempt {attempt + 1}/{max_retries}")
-                    logger.warning(f"Expected: {expected_count}, Actual: {actual_count}, Difference: {actual_count - expected_count}")
-                
-                if attempt < max_retries - 1:
-                    logger.info(f"Retrying verification in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-            except (requests.exceptions.RequestException, ValueError, KeyError) as e:
-                logger.error(f"Error getting document count on attempt {attempt + 1}: {str(e)}")
-                if attempt < max_retries - 1:
-                    logger.info(f"Retrying verification in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                    continue
+                    logger.warning(f"Document count mismatch: Expected {expected_count} new documents, got {new_documents}")
+                    return {
+                        "status": "error",
+                        "message": f"Document count mismatch: Expected {expected_count} new documents, got {new_documents}",
+                        "expected_count": expected_count,
+                        "actual_count": new_documents,
+                        "documents_indexed": new_documents
+                    }
+            except Exception as e:
+                logger.error(f"Error verifying document count: {str(e)}")
                 return {
                     "status": "error",
-                    "message": f"Failed to get document count after {max_retries} attempts: {str(e)}",
+                    "message": f"Error verifying document count: {str(e)}",
                     "expected_count": expected_count,
-                    "actual_count": None
+                    "actual_count": 0,
+                    "documents_indexed": 0
                 }
-        
-        if resume:
-            new_documents = actual_count - initial_count
-            return {
-                "status": "error",
-                "message": f"Document count mismatch after {max_retries} attempts",
-                "expected_count": expected_count,
-                "actual_count": new_documents,
-                "total_count": actual_count,
-                "initial_count": initial_count,
-                "difference": new_documents - expected_count
-            }
         else:
-            return {
-                "status": "error",
-                "message": f"Document count mismatch after {max_retries} attempts",
-                "expected_count": expected_count,
-                "actual_count": actual_count,
-                "difference": actual_count - expected_count
-            }
+            # In fresh load mode, we verify the total count
+            try:
+                # Use the processed count from the FileProcessor
+                actual_count = self.file_processor._processed_count_from_bulk
+                logger.info(f"Document count verification - Expected: {expected_count}, Actual: {actual_count}")
+                
+                if actual_count == expected_count:
+                    logger.info(f"Document count verification successful: {actual_count} documents match expected count")
+                    return {
+                        "status": "success",
+                        "message": f"Document count verification successful: {actual_count} documents match expected count",
+                        "expected_count": expected_count,
+                        "actual_count": actual_count,
+                        "documents_indexed": actual_count
+                    }
+                else:
+                    logger.warning(f"Document count mismatch: Expected {expected_count}, got {actual_count}")
+                    return {
+                        "status": "error",
+                        "message": f"Document count mismatch: Expected {expected_count}, got {actual_count}",
+                        "expected_count": expected_count,
+                        "actual_count": actual_count,
+                        "documents_indexed": actual_count
+                    }
+            except Exception as e:
+                logger.error(f"Error verifying document count: {str(e)}")
+                return {
+                    "status": "error",
+                    "message": f"Error verifying document count: {str(e)}",
+                    "expected_count": expected_count,
+                    "actual_count": 0,
+                    "documents_indexed": 0
+                }
 
     def _get_processed_files(self, index_name: str) -> List[str]:
         """
@@ -297,12 +287,12 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
         Raises:
             OpenSearchException: If there's an error processing any file
         """
-        total_rows = 0
+        total_rows_from_file = 0
         total_files = 0
         
         if not all_files:
             logger.warning(NO_FILES_MESSAGE)
-            return total_rows, total_files
+            return total_rows_from_file, total_files
             
         logger.info(f"Processing {len(all_files)} files in total")
         
@@ -331,11 +321,11 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                 
             try:
                 total_files += 1
-                rows_processed = self.file_processor.process_file(file_info_dict, index_name, self._make_request)
-                total_rows += rows_processed
+                rows_processed_from_file = self.file_processor.process_file(file_info_dict, index_name, self._make_request)
+                total_rows_from_file += rows_processed_from_file
                 with self._lock:
-                    self._processed_count += rows_processed
-                logger.info(f"Processed {rows_processed} rows from {file_identifier}")
+                    self._processed_count += rows_processed_from_file
+                logger.info(f"Processed {rows_processed_from_file} rows from {file_identifier}")
                 
                 # Update tracking file with successfully processed file
                 self._update_processed_files(index_name, file_identifier)
@@ -344,7 +334,7 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                 logger.error(f"Error processing file {file_identifier}: {str(e)}")
                 raise OpenSearchException(f"Error processing file {file_identifier}: {str(e)}")
                 
-        return total_rows, total_files
+        return total_rows_from_file, total_files
 
     def ingest_data(self, bucket: Optional[str] = None, prefix: Optional[str] = None, 
                     local_files: Optional[List[str]] = None, local_folder: Optional[str] = None,

@@ -35,9 +35,6 @@ logger = logging.getLogger(__name__)
 # Disable SSL verification warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Get configuration from environment variables
-INDEX_RECREATE_THRESHOLD = int(os.getenv('INDEX_RECREATE_THRESHOLD', '1000000'))
-
 class OpenSearchIndexManager(OpenSearchBaseManager):
     """
     Manages OpenSearch index operations.
@@ -49,15 +46,14 @@ class OpenSearchIndexManager(OpenSearchBaseManager):
     - Handle errors and logging
     """
     
-    def __init__(self, opensearch_endpoint: Optional[str] = None, verify_ssl: bool = False):
+    def __init__(self, opensearch_endpoint: Optional[str] = None):
         """
-        Initialize the index manager.
+        Initialize the OpenSearch index manager.
         
         Args:
             opensearch_endpoint (str, optional): The OpenSearch cluster endpoint URL
-            verify_ssl (bool): Whether to verify SSL certificates
         """
-        super().__init__(opensearch_endpoint, verify_ssl)
+        super().__init__(opensearch_endpoint=opensearch_endpoint)
         logger.info("Initialized OpenSearchIndexManager")
 
     def validate_and_cleanup_index(self, index_name: str) -> Dict[str, Any]:
@@ -100,7 +96,7 @@ class OpenSearchIndexManager(OpenSearchBaseManager):
             logger.info(f"Current document count for {index_name}: {current_count}")
             
             # Check if document count is within threshold
-            threshold = int(os.getenv('DOCUMENT_COUNT_THRESHOLD', '1000000'))
+            threshold = int(os.getenv('INDEX_RECREATE_THRESHOLD', '1000000'))
             if current_count <= threshold:
                 logger.info(f"Document count ({current_count}) is within threshold ({threshold}). Cleaning up documents...")
                 cleanup_result = self._delete_all_documents(index_name)

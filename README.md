@@ -1,10 +1,10 @@
 # OpenSearch Ingestion System
 
-A Python-based system for ingesting data from S3 CSV files into OpenSearch with support for parallel processing.
+A Python-based system for ingesting data from multiple sources (S3, local files, and folders) into OpenSearch with support for parallel processing, batch operations, and zero-downtime data refreshes.
 
 ## Features
 
-- Efficient CSV file processing using pandas
+- Efficient CSV and JSON file processing using pandas
 - Parallel processing with configurable number of threads
 - Batch processing for optimal performance
 - Document count validation
@@ -12,6 +12,11 @@ A Python-based system for ingesting data from S3 CSV files into OpenSearch with 
 - AWS S3 integration
 - OpenSearch bulk ingestion
 - Robust response handling for OpenSearch operations
+- Support for both local files and S3 sources
+- Resume and fresh load modes for interrupted operations
+- Alias management with validation
+- Flexible file source options (local folder, S3, individual files)
+- Upsert capability for updating existing documents (if source file has id field/attribute which uniquely identifies the document - must match with _id in index)
 
 ## Prerequisites
 
@@ -24,7 +29,7 @@ A Python-based system for ingesting data from S3 CSV files into OpenSearch with 
 
 ### Authentication Options
 
-#### 1. OpenSearch Backend Role (Recommended)
+###OpenSearch Backend Role (Recommended)
 The system supports OpenSearch backend role authentication using AWS IAM roles. This is the recommended approach for production environments.
 
 1. Configure your OpenSearch domain to use IAM authentication
@@ -33,10 +38,10 @@ The system supports OpenSearch backend role authentication using AWS IAM roles. 
 ```
 OPENSEARCH_ENDPOINT=your_opensearch_endpoint
 AWS_REGION=your_aws_region
-USE_BACKEND_ROLE=true
 ```
 
 Required IAM permissions:
+1. **OpenSearch Cluster** (for all opensearch API calls):
 ```json
 {
     "Version": "2012-10-17",
@@ -56,83 +61,83 @@ Required IAM permissions:
     ]
 }
 ```
-
-#### 2. Basic Authentication (Legacy)
-For development or testing environments, you can use basic authentication:
-
-1. Create a `.env` file in the project root with the following variables:
-```
-# OpenSearch Configuration
-OPENSEARCH_ENDPOINT=<opensearch-endpoint>
-AWS_REGION=<aws-region>
-
-# AWS IAM Role Configuration
-AWS_PROFILE=default  # Optional: specify AWS profile if using multiple profiles
-AWS_ROLE_ARN=<aws-role-arn>  # Optional: specify role ARN if using role assumption
-
-# Performance Configuration
-BATCH_SIZE=<batch-size>
-MAX_WORKERS=<max-workers>
-INDEX_RECREATE_THRESHOLD=<index-recreate-threshold>
-
-# Logging Configuration
-LOG_LEVEL=INFO
-LOG_FORMAT=%(asctime)s - %(name)s - %(levelname)s - %(message)s
-
-# SSL Configuration
-VERIFY_SSL=<verify-ssl>  # Set to true in production
-
-# Optional environment variables
-DOCUMENT_COUNT_THRESHOLD=<document-count-threshold>  # Percentage difference threshold for alias switch operation to avoid alias switch when document count is 0 in target index
-
+2. **S3 Permissions** (for bulk ingestion):
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetObject",
+                "s3:ListBucket"
+            ],
+            "Resource": [
+                "arn:aws:s3:::your-bucket-name",
+                "arn:aws:s3:::your-bucket-name/*"
+            ]
+        }
+    ]
+}
 ```
 
 ## Usage
 
 ### Bulk Ingestion
 
-To ingest data from S3 or local files into OpenSearch:
+The `bulkupdate.py` script provides flexible options for ingesting data from various sources:
 
-```bash
-python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index my_index_primary --batch-size 1000 --max-workers 8
-```
+#### File Source Options
 
-#### Additional Examples
+1. **S3 Bucket**:
+   ```bash
+   python bulkupdate.py --bucket my-bucket --prefix data/ --index my_index
+   ```
 
-- Process files from an S3 bucket:
-  ```bash
-  python bulkupdate.py --bucket my-bucket --prefix data/ --index my_index
-  ```
+2. **Local Folder** (processes all CSV and JSON files in the folder):
+   ```bash
+   python bulkupdate.py --local-folder ./data --index my_index
+   ```
 
-- Process local CSV and JSON files:
-  ```bash
-  python bulkupdate.py --local-files data1.csv data2.json --index my_index
-  ```
+3. **Individual Files** (mix of local files and S3 files):
+   ```bash
+   python bulkupdate.py --local-files data1.csv data2.json --index my_index
+   ```
 
-- Process multiple JSON files:
-  ```bash
-  python bulkupdate.py --local-files data1.json data2.json --index my_index
-  ```
+4. **Combined Sources** (process files from both S3 and local sources):
+   ```bash
+   python bulkupdate.py --bucket my-bucket --prefix data/ --local-files local1.csv local2.json --index my_index
+   ```
 
-- Process files from both S3 and local sources:
-  ```bash
-  python bulkupdate.py --bucket my-bucket --prefix data/ --local-files local1.csv local2.json --index my_index
-  ```
+#### Processing Modes
 
-- Process all files in a local folder:
-  ```bash
-  python bulkupdate.py --local-folder ./data --index my_index
-  ```
-
-- Resume processing from where it left off:
+- **Resume Mode** (continue from where it left off - fresh load if this argument is not added):
   ```bash
   python bulkupdate.py --bucket my-bucket --prefix data/ --index my_index --resume
   ```
 
-- Perform a fresh load, clearing the tracking file:
+- **Fresh Load Mode** (clear tracking file and process all files - this is optional argument and default is fresh load only):
   ```bash
   python bulkupdate.py --bucket my-bucket --prefix data/ --index my_index --fresh-load
   ```
+
+#### Performance Tuning
+
+- **Batch Size** (number of documents per batch):
+  ```bash
+  python bulkupdate.py --bucket my-bucket --prefix data/ --index my_index --batch-size 1000
+  ```
+
+- **Worker Threads** (number of parallel processing threads - optional argument and default is 4):
+  ```bash
+  python bulkupdate.py --bucket my-bucket --prefix data/ --index my_index --max-workers 4
+  ```
+
+#### Complete Example
+
+```bash
+python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index my_index_primary --batch-size 1000 --max-workers 8
+```
 
 ### Resume and Fresh Load Modes
 
@@ -143,14 +148,24 @@ The bulk ingestion tool supports two modes for handling file processing:
    - Uses a tracking file (`processed_files.json`) to maintain a record of processed files
    - Useful when a previous ingestion run was interrupted
    - Allows you to continue processing from where it left off
+   - Verifies document count based on processed records from bulk API responses
 
 2. **Fresh Load Mode** (default behavior):
    - Clears the tracking file for the specified index
    - Processes all files regardless of previous processing history
    - Useful when you want to reprocess all files from scratch
    - This is the default behavior when no flags are specified
+   - Verifies document count based on processed records from bulk API responses
 
-Note: You cannot specify `--resume` or ommit this option for fresh-load which is default behavior.
+3. **Upsert Mode** (`--upsert`):
+   - Updates existing documents if they exist in the index
+   - Inserts new documents if they don't exist
+   - Uses document ID from source files to identify existing documents
+   - Preserves existing documents that aren't in the source files
+   - Useful for incremental updates without full reindexing
+   - Requires source files to have a unique identifier field
+
+Note: You cannot specify `--resume` or omit this option for fresh-load which is default behavior.
 
 ### Alias Management
 
@@ -172,12 +187,13 @@ python switch_alias.py --alias my_index_alias --source my_index_primary --target
 
 ### Parallel Processing
 
-The system now supports parallel processing of CSV files with the following features:
+The system now supports parallel processing of CSV and JSON files with the following features:
 - Configurable number of worker threads
 - Thread-safe document counting
 - Queue-based batch processing
 - Graceful worker shutdown
 - Error handling for worker threads
+- Accurate record counting from bulk API responses
 
 The number of threads can be adjusted based on your system's capabilities and requirements. A higher number of threads may improve performance but will also increase memory usage and network connections.
 
@@ -205,12 +221,13 @@ The system has been updated with improved response handling for OpenSearch opera
 4. **Index Operations**:
    - Improved index validation and cleanup
    - Better handling of index existence checks
-   - Enhanced document count verification
+   - Enhanced document count verification using bulk API response counts
 
 5. **Alias Management**:
    - Fixed alias switching operations
    - Improved alias information retrieval
    - Better validation of alias operations
+   - Early validation of alias existence
 
 ### Resume and Fresh Load Functionality
 
@@ -222,6 +239,7 @@ The system now supports resume and fresh load modes for bulk ingestion:
    - Skips already processed files to save time and resources
    - Maintains processing history per index
    - Must be explicitly specified with the `--resume` flag
+   - Verifies document count based on processed records from bulk API responses
 
 2. **Fresh Load Mode** (default behavior):
    - Clears the tracking file for a specific index
@@ -229,11 +247,17 @@ The system now supports resume and fresh load modes for bulk ingestion:
    - Useful for data refreshes or when reprocessing is needed
    - This is the default behavior when no flags are specified
    - Can be explicitly specified with the `--fresh-load` flag for clarity
+   - Verifies document count based on processed records from bulk API responses
 
 3. **File Tracking**:
    - Maintains a record of processed files in `processed_files.json`
    - Organizes tracking data by index name
    - Provides clear logging of skipped and processed files
+
+4. **Accurate Record Counting**:
+   - Tracks processed records based on bulk API response counts
+   - Provides more accurate document count verification
+   - Ensures data consistency between source and target indices
 
 ## Performance Configuration Guide
 
@@ -387,44 +411,6 @@ Detailed logging is provided for:
 ### AWS IAM Requirements
 
 The tool requires an IAM role with the following permissions:
-
-1. **OpenSearch Permissions**:
-  ```json
-  {
-      "Version": "2012-10-17",
-      "Statement": [
-          {
-              "Effect": "Allow",
-              "Action": [
-                "es:ESHttp*"
-              ],
-              "Resource": [
-                "arn:aws:es:region:account:domain/domain-name/*"
-            ]
-        }
-    ]
-}
-```
-
-2. **S3 Permissions** (for bulk ingestion):
-```json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "s3:GetObject",
-                "s3:ListBucket"
-            ],
-            "Resource": [
-                "arn:aws:s3:::your-bucket-name",
-                "arn:aws:s3:::your-bucket-name/*"
-            ]
-        }
-    ]
-}
-```
 
 ### Environment Variables
 Required environment variables in `.env` file:

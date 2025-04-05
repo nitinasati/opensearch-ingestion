@@ -33,16 +33,14 @@ class OpenSearchReindexManager(OpenSearchBaseManager):
     - Handle errors and logging
     """
     
-    def __init__(self, opensearch_endpoint: Optional[str] = None, 
-                 verify_ssl: bool = False):
+    def __init__(self, opensearch_endpoint: Optional[str] = None):
         """
-        Initialize the reindex manager.
+        Initialize the OpenSearch reindex manager.
         
         Args:
             opensearch_endpoint (str, optional): The OpenSearch cluster endpoint URL
-            verify_ssl (bool): Whether to verify SSL certificates
         """
-        super().__init__(opensearch_endpoint, verify_ssl)
+        super().__init__(opensearch_endpoint=opensearch_endpoint)
         self.index_manager = OpenSearchIndexManager()
         logger.info(f"Initialized OpenSearchReindexManager with endpoint: {self.opensearch_endpoint}")
     

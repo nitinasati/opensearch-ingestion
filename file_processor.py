@@ -37,6 +37,7 @@ class FileProcessor:
         self.s3_client = boto3.client('s3')
         self._batch_queue = Queue()
         self._processed_count = 0
+        self._processed_count_from_bulk = 0
         self._lock = threading.Lock()
         logger.info(f"Initialized FileProcessor with batch_size: {batch_size}, max_workers: {max_workers}")
 
@@ -255,7 +256,7 @@ class FileProcessor:
             file_key (str): File identifier for logging
             
         Returns:
-            bool: True if batch was processed successfully, False otherwise
+            bool: True if batch was processed successfully
         """
         try:
             # Create bulk request
@@ -274,15 +275,20 @@ class FileProcessor:
                 logger.error(f"Bulk request had errors for file {file_key}")
                 return False
             
-            # Update processed count
+            # Extract processed record count from the response
+            processed_count = 0
+            if 'items' in response:
+                processed_count = len(response['items'])
+                logger.info(f"Processed {processed_count} records from bulk request for file {file_key}")
+            
+            # Update processed count with the actual count from the response
             with self._lock:
-                self._processed_count += len(batch)
+                self._processed_count_from_bulk += processed_count
                 
-            logger.debug(f"Successfully processed batch of {len(batch)} documents from {file_key}")
             return True
             
         except Exception as e:
-            logger.error(f"Error processing batch from {file_key}: {str(e)}")
+            logger.error(f"Error processing batch for file {file_key}: {str(e)}")
             return False
 
     def _process_batch_worker(self, index_name: str, file_key: str) -> None:
@@ -299,7 +305,9 @@ class FileProcessor:
                 if batch is None:  # Poison pill to stop the worker
                     break
                 
-                self._process_batch(batch, index_name, file_key)
+                success = self._process_batch(batch, index_name, file_key)
+                if not success:
+                    logger.warning(f"Failed to process batch for file {file_key}")
                 self._batch_queue.task_done()
                 
             except Queue.Empty:
@@ -309,7 +317,7 @@ class FileProcessor:
                 # Mark the task as done even if there was an error
                 try:
                     self._batch_queue.task_done()
-                except:
+                except Exception:
                     pass
                 break
 
@@ -430,13 +438,13 @@ class FileProcessor:
                 for future in as_completed(futures):
                     try:
                         future.result()
-                    except (ValueError, RuntimeError) as e:
+                    except (RuntimeError) as e:
                         logger.error(f"Worker thread error: {str(e)}")
             
             file_time = time.time() - file_start_time
             logger.info(f"Completed processing file {file_path} in {file_time:.2f} seconds")
             return row_count
                 
-        except (ValueError, IOError, json.JSONDecodeError) as e:
+        except (IOError, json.JSONDecodeError) as e:
             logger.error(f"Error processing file {file_path}: {str(e)}")
             return 0 
