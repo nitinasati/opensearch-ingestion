@@ -44,6 +44,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Constants
 NO_FILES_MESSAGE = "No files to process"
+TRACKING_FILE = "processed_files.json"
 
 class OpenSearchBulkIngestion(OpenSearchBaseManager):
     """
@@ -143,13 +144,115 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             "difference": actual_count - expected_count
         }
 
-    def _process_files(self, all_files: List[Dict[str, Any]], index_name: str) -> Tuple[int, int]:
+    def _get_processed_files(self, index_name: str) -> List[str]:
+        """
+        Get a list of files that have already been processed for a given index.
+        
+        Args:
+            index_name (str): Name of the index
+            
+        Returns:
+            List[str]: List of file identifiers that have been processed
+        """
+        try:
+            if not os.path.exists(TRACKING_FILE):
+                return []
+                
+            with open(TRACKING_FILE, 'r') as f:
+                tracking_data = json.load(f)
+                
+            # Return files for the specific index or empty list if index not found
+            return tracking_data.get(index_name, [])
+            
+        except (json.JSONDecodeError, IOError) as e:
+            logger.warning(f"Error reading tracking file: {str(e)}")
+            return []
+            
+    def _update_processed_files(self, index_name: str, file_identifier: str) -> None:
+        """
+        Update the list of processed files for a given index.
+        
+        Args:
+            index_name (str): Name of the index
+            file_identifier (str): Unique identifier for the processed file
+        """
+        try:
+            # Load existing tracking data
+            tracking_data = {}
+            if os.path.exists(TRACKING_FILE):
+                with open(TRACKING_FILE, 'r') as f:
+                    tracking_data = json.load(f)
+            
+            # Initialize index entry if it doesn't exist
+            if index_name not in tracking_data:
+                tracking_data[index_name] = []
+                
+            # Add file if not already in the list
+            if file_identifier not in tracking_data[index_name]:
+                tracking_data[index_name].append(file_identifier)
+                
+            # Write updated tracking data
+            with open(TRACKING_FILE, 'w') as f:
+                json.dump(tracking_data, f, indent=2)
+                
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Error updating tracking file: {str(e)}")
+            
+    def _clear_processed_files(self, index_name: Optional[str] = None) -> None:
+        """
+        Clear the tracking file for a specific index or all indices.
+        
+        Args:
+            index_name (str, optional): Name of the index to clear. If None, clears all indices.
+        """
+        try:
+            if not os.path.exists(TRACKING_FILE):
+                return
+                
+            if index_name is None:
+                # Clear entire tracking file
+                with open(TRACKING_FILE, 'w') as f:
+                    json.dump({}, f, indent=2)
+                logger.info("Cleared all processed files tracking data")
+            else:
+                # Clear only the specified index
+                with open(TRACKING_FILE, 'r') as f:
+                    tracking_data = json.load(f)
+                    
+                if index_name in tracking_data:
+                    tracking_data[index_name] = []
+                    with open(TRACKING_FILE, 'w') as f:
+                        json.dump(tracking_data, f, indent=2)
+                    logger.info(f"Cleared processed files tracking data for index: {index_name}")
+                    
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Error clearing tracking file: {str(e)}")
+            
+    def _get_file_identifier(self, file_info: Dict[str, Any]) -> str:
+        """
+        Generate a unique identifier for a file based on its information.
+        
+        Args:
+            file_info (Dict[str, Any]): File information
+            
+        Returns:
+            str: Unique identifier for the file
+        """
+        if "bucket" in file_info and "key" in file_info:
+            # S3 file
+            return f"{file_info['bucket']}/{file_info['key']}"
+        else:
+            # Local file
+            return file_info.get("file_path", "")
+
+    def _process_files(self, all_files: List[Dict[str, Any]], index_name: str, resume: bool = False) -> Tuple[int, int]:
         """
         Process a list of files and return total rows and files processed.
         
         Args:
             all_files (List[Dict[str, Any]]): List of files to process
             index_name (str): Target index name
+            resume (bool): Whether to resume processing from previously processed files
             
         Returns:
             Tuple[int, int]: (total_rows, total_files)
@@ -165,6 +268,13 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             return total_rows, total_files
             
         logger.info(f"Processing {len(all_files)} files in total")
+        
+        # Get list of already processed files if resuming
+        processed_files = []
+        if resume:
+            processed_files = self._get_processed_files(index_name)
+            logger.info(f"Found {len(processed_files)} previously processed files")
+            
         for file_info in all_files:
             # Handle both string and dictionary file_info formats
             if isinstance(file_info, str):
@@ -174,8 +284,13 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                     "type": "json" if file_info.lower().endswith('.json') else "csv"
                 }
             else:
-                file_identifier = file_info.get("file_path", f"{file_info.get('bucket', '')}/{file_info.get('key', '')}")
+                file_identifier = self._get_file_identifier(file_info)
                 file_info_dict = file_info
+                
+            # Skip if file was already processed and we're in resume mode
+            if resume and file_identifier in processed_files:
+                logger.info(f"Skipping already processed file: {file_identifier}")
+                continue
                 
             try:
                 total_files += 1
@@ -184,6 +299,10 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                 with self._lock:
                     self._processed_count += rows_processed
                 logger.info(f"Processed {rows_processed} rows from {file_identifier}")
+                
+                # Update tracking file with successfully processed file
+                self._update_processed_files(index_name, file_identifier)
+                    
             except Exception as e:
                 logger.error(f"Error processing file {file_identifier}: {str(e)}")
                 raise OpenSearchException(f"Error processing file {file_identifier}: {str(e)}")
@@ -192,7 +311,7 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
 
     def ingest_data(self, bucket: Optional[str] = None, prefix: Optional[str] = None, 
                     local_files: Optional[List[str]] = None, local_folder: Optional[str] = None,
-                    index_name: str = None) -> Dict[str, Any]:
+                    index_name: str = None, resume: bool = False, fresh_load: bool = True) -> Dict[str, Any]:
         """
         Ingest data from CSV or JSON files into OpenSearch.
         
@@ -204,6 +323,8 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             local_files (List[str], optional): List of local CSV or JSON file paths
             local_folder (str, optional): Path to a folder containing CSV or JSON files
             index_name (str): Name of the target index
+            resume (bool): Whether to resume processing from previously processed files
+            fresh_load (bool): Whether to perform a fresh load, clearing the tracking file (default: True)
             
         Returns:
             Dict[str, Any]: Result containing status and details
@@ -214,6 +335,11 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
         try:
             logger.info(f"Starting data ingestion to index: {index_name}")
             self._processed_count = 0
+            
+            # Clear tracking file if fresh load is requested (default behavior)
+            if fresh_load:
+                logger.info("Performing fresh load - clearing processed files tracking")
+                self._clear_processed_files(index_name)
             
             # Process local folder if provided
             if local_folder:
@@ -226,8 +352,17 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             # Process local files if provided
             if local_files:
                 for file_path in local_files:
-                    file_type = "csv" if file_path.lower().endswith('.csv') else "json"
-                    all_files.append({"file_path": file_path, "type": file_type})
+                    # Determine file type
+                    file_type = None
+                    if file_path.lower().endswith('.json'):
+                        file_type = "json"
+                    elif file_path.lower().endswith('.csv'):
+                        file_type = "csv"
+                        
+                    if file_type:
+                        all_files.append({"file_path": file_path, "type": file_type})
+                    else:
+                        logger.warning(f"Ignoring file {file_path} due to unsupported file type. Only .csv and .json files are supported.")
             
             # Process S3 files if bucket and prefix are provided
             if bucket and prefix:
@@ -235,7 +370,15 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                 if s3_result["status"] == "error":
                     return s3_result
                 if "files" in s3_result:
-                    all_files.extend(s3_result["files"])
+                    # Filter out unsupported file types
+                    filtered_files = []
+                    for file_info in s3_result["files"]:
+                        file_path = file_info.get("file_path", f"{file_info.get('bucket', '')}/{file_info.get('key', '')}")
+                        if file_info.get("type") in ["csv", "json"]:
+                            filtered_files.append(file_info)
+                        else:
+                            logger.warning(f"Ignoring file {file_path} due to unsupported file type. Only .csv and .json files are supported.")
+                    all_files.extend(filtered_files)
             
             # Check if there are any files to process
             if not all_files:
@@ -256,7 +399,7 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                 return cleanup_result
             
             # Process all files
-            total_rows, total_files = self._process_files(all_files, index_name)
+            total_rows, total_files = self._process_files(all_files, index_name, resume)
             
             # Verify document count
             try:
@@ -317,11 +460,17 @@ def main():
     parser.add_argument('--index', required=True, help='OpenSearch index name')
     parser.add_argument('--batch-size', type=int, default=10000, help='Number of documents to process in each batch (default: 10000)')
     parser.add_argument('--max-workers', type=int, default=4, help='Maximum number of parallel threads (default: 4)')
+    parser.add_argument('--resume', action='store_true', help='Resume processing from previously processed files')
+    parser.add_argument('--fresh-load', action='store_true', help='Perform a fresh load, clearing the tracking file (default behavior)')
     args = parser.parse_args()
     
     # Validate that at least one data source is provided
     if not args.bucket and not args.local_files and not args.local_folder:
         parser.error("At least one of --bucket, --local-files, or --local-folder must be provided")
+    
+    # Validate that resume and fresh-load are not both specified
+    if args.resume and args.fresh_load:
+        parser.error("Cannot specify both --resume and --fresh-load options")
     
     logger.info(f"Starting bulk ingestion script with index: {args.index}")
     if args.bucket:
@@ -330,6 +479,10 @@ def main():
         logger.info(f"Local files: {', '.join(args.local_files)}")
     if args.local_folder:
         logger.info(f"Local folder: {args.local_folder}")
+    if args.resume:
+        logger.info("Resume mode enabled - will skip previously processed files")
+    else:
+        logger.info("Fresh load mode (default) - will process all files")
     
     try:
         # Initialize ingestion service with batch size and max workers
@@ -344,7 +497,9 @@ def main():
             prefix=args.prefix,
             local_files=args.local_files,
             local_folder=args.local_folder,
-            index_name=args.index
+            index_name=args.index,
+            resume=args.resume,
+            fresh_load=not args.resume  # Default to fresh_load unless resume is specified
         )
         
         # Print results
@@ -377,5 +532,5 @@ if __name__ == "__main__":
 # python bulkupdate.py --local-files member_data.csv member_data.json --index member_index_primary --batch-size 1000 --max-workers 2
 # python bulkupdate.py --local-files data1.json data2.json --index my_index_primary --batch-size 1000 --max-workers 2
 # python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --local-files data1.csv data2.json --index my_index_primary --batch-size 1000 --max-workers 2
-# python bulkupdate.py --local-folder ./testdata/member_data --index my_index_primary --batch-size 1000 --max-workers 2
+# python bulkupdate.py --local-folder ./testdata --index member_index_primary --batch-size 1000 --max-workers 2
 

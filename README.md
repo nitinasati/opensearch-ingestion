@@ -89,31 +89,68 @@ DOCUMENT_COUNT_THRESHOLD=<document-count-threshold>  # Percentage difference thr
 
 ## Usage
 
-### Bulk Update Script
+### Bulk Ingestion
 
-The `bulkupdate.py` script processes CSV files from S3 and ingests them into OpenSearch with parallel processing support.
+To ingest data from S3 or local files into OpenSearch:
 
 ```bash
 python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index my_index_primary --batch-size 1000 --max-workers 8
 ```
 
-#### Additional Examples:
-```bash
-# Process files from S3 bucket
-python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index member_index_primary --batch-size 1000 --max-workers 2
+#### Additional Examples
 
-# Process local CSV and JSON files
-python bulkupdate.py --local-files member_data.csv member_data.json --index member_index_primary --batch-size 1000 --max-workers 2
+- Process files from an S3 bucket:
+  ```bash
+  python bulkupdate.py --bucket my-bucket --prefix data/ --index my_index
+  ```
 
-# Process multiple JSON files
-python bulkupdate.py --local-files data1.json data2.json --index my_index_primary --batch-size 1000 --max-workers 2
+- Process local CSV and JSON files:
+  ```bash
+  python bulkupdate.py --local-files data1.csv data2.json --index my_index
+  ```
 
-# Process files from both S3 and local sources
-python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --local-files data1.csv data2.json --index my_index_primary --batch-size 1000 --max-workers 2
+- Process multiple JSON files:
+  ```bash
+  python bulkupdate.py --local-files data1.json data2.json --index my_index
+  ```
 
-# Process all files in a local folder
-python bulkupdate.py --local-folder ./testdata/member_data --index my_index_primary --batch-size 1000 --max-workers 2
-```
+- Process files from both S3 and local sources:
+  ```bash
+  python bulkupdate.py --bucket my-bucket --prefix data/ --local-files local1.csv local2.json --index my_index
+  ```
+
+- Process all files in a local folder:
+  ```bash
+  python bulkupdate.py --local-folder ./data --index my_index
+  ```
+
+- Resume processing from where it left off:
+  ```bash
+  python bulkupdate.py --bucket my-bucket --prefix data/ --index my_index --resume
+  ```
+
+- Perform a fresh load, clearing the tracking file:
+  ```bash
+  python bulkupdate.py --bucket my-bucket --prefix data/ --index my_index --fresh-load
+  ```
+
+### Resume and Fresh Load Modes
+
+The bulk ingestion tool supports two modes for handling file processing:
+
+1. **Resume Mode** (`--resume`):
+   - Skips files that have already been successfully processed
+   - Uses a tracking file (`processed_files.json`) to maintain a record of processed files
+   - Useful when a previous ingestion run was interrupted
+   - Allows you to continue processing from where it left off
+
+2. **Fresh Load Mode** (default behavior):
+   - Clears the tracking file for the specified index
+   - Processes all files regardless of previous processing history
+   - Useful when you want to reprocess all files from scratch
+   - This is the default behavior when no flags are specified
+
+Note: You cannot specify `--resume` or ommit this option for fresh-load which is default behavior.
 
 ### Alias Management
 
@@ -174,6 +211,29 @@ The system has been updated with improved response handling for OpenSearch opera
    - Fixed alias switching operations
    - Improved alias information retrieval
    - Better validation of alias operations
+
+### Resume and Fresh Load Functionality
+
+The system now supports resume and fresh load modes for bulk ingestion:
+
+1. **Resume Mode** (`--resume`):
+   - Tracks successfully processed files in a JSON tracking file
+   - Allows resuming interrupted ingestion processes
+   - Skips already processed files to save time and resources
+   - Maintains processing history per index
+   - Must be explicitly specified with the `--resume` flag
+
+2. **Fresh Load Mode** (default behavior):
+   - Clears the tracking file for a specific index
+   - Enables reprocessing of all files from scratch
+   - Useful for data refreshes or when reprocessing is needed
+   - This is the default behavior when no flags are specified
+   - Can be explicitly specified with the `--fresh-load` flag for clarity
+
+3. **File Tracking**:
+   - Maintains a record of processed files in `processed_files.json`
+   - Organizes tracking data by index name
+   - Provides clear logging of skipped and processed files
 
 ## Performance Configuration Guide
 

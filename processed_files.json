@@ -1,0 +1,9 @@
+{
+  "member_index_primary": [
+    "openlpocbucket/opensearch/testdata/member_data1.csv",
+    "openlpocbucket/opensearch/testdata/member_data2.csv",
+    "openlpocbucket/opensearch/testdata/member_data.json",
+    "openlpocbucket/opensearch/testdata/member_data1.json",
+    "openlpocbucket/opensearch/testdata/member_data2.json"
+  ]
+}
