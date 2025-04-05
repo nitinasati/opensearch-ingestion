@@ -230,11 +230,18 @@ class FileProcessor:
         """
         bulk_request = []
         for doc in documents:
-            bulk_request.append(json.dumps({
+            # Use the 'id' field from the document if it exists
+            index_action = {
                 "index": {
                     "_index": index_name
                 }
-            }))
+            }
+            
+            # Add the document ID if it exists in the document
+            if "id" in doc:
+                index_action["index"]["_id"] = doc["id"]
+                
+            bulk_request.append(json.dumps(index_action))
             bulk_request.append(json.dumps(doc))
         return '\n'.join(bulk_request) + '\n'
 

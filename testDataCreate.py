@@ -24,13 +24,14 @@ def generate_csv_data(num_records=100, filename="testdata/member_data.csv"):
     os.makedirs(os.path.dirname(filename), exist_ok=True)
 
     with open(filename, "w", newline="", encoding="utf-8") as csvfile:
-        fieldnames = ["memberId", "groupId", "firstName", "lastName", "middleName", "addressLine1", "addressLine2", "city", "state", "zipcode", "country", "phoneNumber1", "phoneNumber2", "email1", "email2", "objectId", "objectName", "subjectId", "subjectName", "fatherName", "motherName", "dateOfBirth", "gender", "maritalStatus", "employmentStatus", "policyNumber", "coverageStartDate", "coverageEndDate", "memberStatus", "preferredLanguage", "createdAt", "updatedAt"]
+        fieldnames = ["id", "memberId", "groupId", "firstName", "lastName", "middleName", "addressLine1", "addressLine2", "city", "state", "zipcode", "country", "phoneNumber1", "phoneNumber2", "email1", "email2", "objectId", "objectName", "subjectId", "subjectName", "fatherName", "motherName", "dateOfBirth", "gender", "maritalStatus", "employmentStatus", "policyNumber", "coverageStartDate", "coverageEndDate", "memberStatus", "preferredLanguage", "createdAt", "updatedAt"]
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
         writer.writeheader()
 
         for _ in range(num_records):
             print(f"Generating record {_} of {num_records}")    
+            unique_id = str(uuid.uuid4())
             member_id = str(uuid.uuid4())
             group_id = str(uuid.uuid4())
             first_name = random.choice(first_names)
@@ -66,6 +67,7 @@ def generate_csv_data(num_records=100, filename="testdata/member_data.csv"):
             updated_at = datetime.now().isoformat()
 
             record = {
+                "id": unique_id,
                 "memberId": member_id,
                 "groupId": group_id,
                 "firstName": first_name,
@@ -159,6 +161,7 @@ def generate_json_data(num_records=100, filename="testdata/member_data.json", si
 def generate_record(first_names, last_names, middle_names, cities, states, countries, 
                    genders, marital_statuses, employment_statuses, member_statuses, languages):
     """Helper function to generate a single record with the given data."""
+    unique_id = str(uuid.uuid4())
     member_id = str(uuid.uuid4())
     group_id = str(uuid.uuid4())
     first_name = random.choice(first_names)
@@ -194,6 +197,7 @@ def generate_record(first_names, last_names, middle_names, cities, states, count
     updated_at = datetime.now().isoformat()
 
     return {
+        "id": unique_id,
         "memberId": member_id,
         "groupId": group_id,
         "firstName": first_name,
