@@ -89,13 +89,14 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
         
         logger.info(f"Initialized OpenSearchBulkIngestion with batch_size: {batch_size}, max_workers: {max_workers}")
 
-    def _verify_document_count(self, index_name: str, expected_count: int) -> dict:
+    def _verify_document_count(self, index_name: str, expected_count: int, resume: bool = False, initial_count: int = 0) -> Dict[str, Any]:
         """
         Verify the document count in the target index.
         
         Args:
             index_name (str): Name of the target index
             expected_count (int): Expected number of documents
+            resume (bool): Whether we're in resume mode
             
         Returns:
             dict: Verification result containing status and details
@@ -103,22 +104,46 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
         max_retries = 3
         retry_delay = 5
         
+        # In resume mode, we need to track the initial count and verify the difference
+      
+        
         for attempt in range(max_retries):
             try:
                 actual_count = self._get_index_count(index_name)
-                logger.info(f"Document count verification - Expected: {expected_count}, Actual: {actual_count}")
                 
-                if actual_count == expected_count:
-                    logger.info(f"Document count verification successful: {actual_count} documents match expected count")
-                    return {
-                        "status": "success",
-                        "documents_indexed": actual_count,
-                        "expected_count": expected_count,
-                        "actual_count": actual_count
-                    }
-                
-                logger.warning(f"Document count mismatch on attempt {attempt + 1}/{max_retries}")
-                logger.warning(f"Expected: {expected_count}, Actual: {actual_count}, Difference: {actual_count - expected_count}")
+                if resume:
+                    # In resume mode, we verify the difference between final and initial count
+                    new_documents = actual_count - initial_count
+                    logger.info(f"Document count verification (resume mode) - Expected new documents: {expected_count}, Actual new documents: {new_documents}")
+                    
+                    if new_documents == expected_count:
+                        logger.info(f"Document count verification successful: {new_documents} new documents match expected count")
+                        return {
+                            "status": "success",
+                            "documents_indexed": new_documents,
+                            "expected_count": expected_count,
+                            "actual_count": new_documents,
+                            "total_count": actual_count,
+                            "initial_count": initial_count
+                        }
+                    
+                    logger.warning(f"Document count mismatch on attempt {attempt + 1}/{max_retries}")
+                    logger.warning(f"Expected new documents: {expected_count}, Actual new documents: {new_documents}, Difference: {new_documents - expected_count}")
+                else:
+                    # In fresh load mode, we verify the total count
+                    logger.info(f"Document count verification - Expected: {expected_count}, Actual: {actual_count}")
+                    
+                    if actual_count == expected_count:
+                        logger.info(f"Document count verification successful: {actual_count} documents match expected count")
+                        return {
+                            "status": "success",
+                            "documents_indexed": actual_count,
+                            "expected_count": expected_count,
+                            "actual_count": actual_count
+                        }
+                    
+                    logger.warning(f"Document count mismatch on attempt {attempt + 1}/{max_retries}")
+                    logger.warning(f"Expected: {expected_count}, Actual: {actual_count}, Difference: {actual_count - expected_count}")
                 
                 if attempt < max_retries - 1:
                     logger.info(f"Retrying verification in {retry_delay} seconds...")
@@ -136,13 +161,25 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                     "actual_count": None
                 }
         
-        return {
-            "status": "error",
-            "message": f"Document count mismatch after {max_retries} attempts",
-            "expected_count": expected_count,
-            "actual_count": actual_count,
-            "difference": actual_count - expected_count
-        }
+        if resume:
+            new_documents = actual_count - initial_count
+            return {
+                "status": "error",
+                "message": f"Document count mismatch after {max_retries} attempts",
+                "expected_count": expected_count,
+                "actual_count": new_documents,
+                "total_count": actual_count,
+                "initial_count": initial_count,
+                "difference": new_documents - expected_count
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"Document count mismatch after {max_retries} attempts",
+                "expected_count": expected_count,
+                "actual_count": actual_count,
+                "difference": actual_count - expected_count
+            }
 
     def _get_processed_files(self, index_name: str) -> List[str]:
         """
@@ -391,19 +428,29 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                     "total_time_seconds": round(time.time() - start_time, 2)
                 }
             
-            # Validate and cleanup target index
-            logger.info(f"Validating and cleaning up index: {index_name}")
-            cleanup_result = self.index_manager.validate_and_cleanup_index(index_name)
-            if cleanup_result["status"] == "error":
-                logger.error(f"Index cleanup failed: {cleanup_result['message']}")
-                return cleanup_result
-            
+            # Validate and cleanup target index only if not in resume mode
+            if not resume:
+                logger.info(f"Validating and cleaning up index: {index_name}")
+                cleanup_result = self.index_manager.validate_and_cleanup_index(index_name)
+                if cleanup_result["status"] == "error":
+                    logger.error(f"Index cleanup failed: {cleanup_result['message']}")
+                    return cleanup_result
+            else:
+                logger.info("Resume mode enabled - skipping index cleanup to preserve existing data")
+            initial_count = 0
+            if resume:
+                try:
+                    initial_count = self._get_index_count(index_name)
+                    logger.info(f"Resume mode - Initial document count: {initial_count}")
+                except Exception as e:
+                    logger.error(f"Error getting initial document count: {str(e)}")
+                    # Continue with verification, but we won't be able to verify the difference
             # Process all files
             total_rows, total_files = self._process_files(all_files, index_name, resume)
             
             # Verify document count
             try:
-                verification_result = self._verify_document_count(index_name, self._processed_count)
+                verification_result = self._verify_document_count(index_name, self._processed_count, resume,initial_count)
                 
                 if verification_result["status"] == "error":
                     return {
