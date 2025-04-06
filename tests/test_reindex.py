@@ -32,13 +32,14 @@ class TestReindex(unittest.TestCase):
     def test_reindex_index_success(self):
         """Test successful reindexing of an index."""
         # Mock the necessary methods
-        self.manager_mock.verify_index_exists.return_value = True
-        self.manager_mock.get_index_count.return_value = 100
-        self.manager_mock.scroll_index.return_value = [
-            {'_source': {'id': 1, 'name': 'test1'}},
-            {'_source': {'id': 2, 'name': 'test2'}}
-        ]
-        self.manager_mock.bulk_index.return_value = {'status': 'success'}
+        self.reindex_manager._verify_index_exists = MagicMock(return_value=True)
+        self.reindex_manager._get_index_count = MagicMock(return_value=100)
+        self.reindex_manager._make_request = MagicMock(return_value={
+            'status': 'success',
+            'response': MagicMock(
+                json=lambda: {'total': 100}
+            )
+        })
         
         # Perform reindexing
         result = self.reindex_manager.reindex('source-index', 'target-index')
@@ -48,10 +49,16 @@ class TestReindex(unittest.TestCase):
         self.assertEqual(result['message'], 'Successfully reindexed 100 documents from source-index to target-index')
         
         # Verify that the necessary methods were called
-        self.manager_mock.verify_index_exists.assert_called_with('source-index')
-        self.manager_mock.get_index_count.assert_called_with('source-index')
-        self.manager_mock.scroll_index.assert_called_with('source-index')
-        self.manager_mock.bulk_index.assert_called()
+        self.reindex_manager._verify_index_exists.assert_called_with('source-index')
+        self.reindex_manager._get_index_count.assert_called_with('source-index')
+        self.reindex_manager._make_request.assert_called_with(
+            'POST',
+            '/_reindex',
+            data={
+                "source": {"index": "source-index"},
+                "dest": {"index": "target-index"}
+            }
+        )
     
     def test_reindex_index_source_not_exists(self):
         """Test reindexing when source index does not exist."""
@@ -71,56 +78,65 @@ class TestReindex(unittest.TestCase):
     def test_reindex_index_empty_source(self):
         """Test reindexing when source index is empty."""
         # Mock the necessary methods
-        self.manager_mock.verify_index_exists.return_value = True
-        self.manager_mock.get_index_count.return_value = 0
+        self.reindex_manager._verify_index_exists = MagicMock(return_value=True)
+        self.reindex_manager._get_index_count = MagicMock(return_value=0)
         
         # Perform reindexing
         result = self.reindex_manager.reindex('source-index', 'target-index')
         
         # Verify the result
-        self.assertEqual(result['status'], 'warning')
+        self.assertEqual(result['status'], 'error')
         self.assertEqual(result['message'], 'Source index source-index is empty')
         
-        # Verify that scroll_index was not called
-        self.manager_mock.scroll_index.assert_not_called()
+        # Verify that _make_request was not called
+        self.manager_mock._make_request.assert_not_called()
     
     def test_reindex_index_bulk_error(self):
-        """Test reindexing when bulk indexing fails."""
+        """Test reindexing when reindex operation fails."""
         # Mock the necessary methods
-        self.manager_mock.verify_index_exists.return_value = True
-        self.manager_mock.get_index_count.return_value = 100
-        self.manager_mock.scroll_index.return_value = [
-            {'_source': {'id': 1, 'name': 'test1'}},
-            {'_source': {'id': 2, 'name': 'test2'}}
-        ]
-        self.manager_mock.bulk_index.return_value = {
+        self.reindex_manager._verify_index_exists = MagicMock(return_value=True)
+        self.reindex_manager._get_index_count = MagicMock(return_value=100)
+        self.reindex_manager._make_request = MagicMock(return_value={
             'status': 'error',
-            'message': 'Bulk indexing failed'
-        }
+            'message': 'Failed to reindex documents'
+        })
         
         # Perform reindexing
         result = self.reindex_manager.reindex('source-index', 'target-index')
         
         # Verify the result
         self.assertEqual(result['status'], 'error')
-        self.assertEqual(result['message'], 'Failed to reindex documents: Bulk indexing failed')
+        self.assertEqual(result['message'], 'Failed to reindex documents: Failed to reindex documents')
+        
+        # Verify that the necessary methods were called
+        self.reindex_manager._verify_index_exists.assert_called_with('source-index')
+        self.reindex_manager._get_index_count.assert_called_with('source-index')
+        self.reindex_manager._make_request.assert_called_with(
+            'POST',
+            '/_reindex',
+            data={
+                "source": {"index": "source-index"},
+                "dest": {"index": "target-index"}
+            }
+        )
     
     def test_reindex_index_scroll_error(self):
-        """Test reindexing when scrolling fails."""
+        """Test reindexing when the reindex operation fails."""
         # Mock the necessary methods
-        self.manager_mock.verify_index_exists.return_value = True
-        self.manager_mock.get_index_count.return_value = 100
-        self.manager_mock.scroll_index.side_effect = Exception('Scroll failed')
-        
+        self.reindex_manager._verify_index_exists = MagicMock(return_value=True)
+        self.reindex_manager._get_index_count = MagicMock(return_value=100)
+        self.reindex_manager.index_manager.validate_and_cleanup_index = MagicMock(return_value={'status': 'success'})
+        self.reindex_manager._make_request = MagicMock(return_value={
+            'status': 'error',
+            'message': 'Failed to make request to OpenSearch after 3 attempts: 404 Client Error: Not Found for url: https://search-mynewdomain-ovgab6nu4xfggw52b77plmruhm.us-east-1.es.amazonaws.com/_reindex'
+        })
+
         # Perform reindexing
         result = self.reindex_manager.reindex('source-index', 'target-index')
-        
+
         # Verify the result
         self.assertEqual(result['status'], 'error')
-        self.assertEqual(result['message'], 'Failed to reindex documents: Scroll failed')
-        
-        # Verify that bulk_index was not called
-        self.manager_mock.bulk_index.assert_not_called()
+        self.assertEqual(result['message'], 'Failed to reindex documents: Failed to make request to OpenSearch after 3 attempts: 404 Client Error: Not Found for url: https://search-mynewdomain-ovgab6nu4xfggw52b77plmruhm.us-east-1.es.amazonaws.com/_reindex')
 
 if __name__ == '__main__':
     unittest.main() 

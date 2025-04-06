@@ -419,132 +419,6 @@ class OpenSearchBaseManager:
                 "message": f"Error deleting documents: {str(e)}"
             }
 
-    def bulk_index(self, index_name: str, documents: list) -> Dict[str, Any]:
-        """
-        Bulk index documents into OpenSearch.
-        
-        Args:
-            index_name (str): Name of the index
-            documents (list): List of documents to index
-            
-        Returns:
-            Dict[str, Any]: Response from OpenSearch
-        """
-        try:
-            # Create bulk request body
-            bulk_request = []
-            for doc in documents:
-                bulk_request.append(json.dumps({"index": {"_index": index_name}}))
-                bulk_request.append(json.dumps(doc))
-            bulk_request = '\n'.join(bulk_request) + '\n'
-            
-            # Send bulk request
-            result = self._make_request(
-                'POST',
-                '/_bulk',
-                data=bulk_request,
-                headers={'Content-Type': 'application/x-ndjson'}
-            )
-            
-            if result['status'] == 'error':
-                return result
-                
-            return {
-                'status': 'success',
-                'message': 'Bulk indexing completed successfully',
-                'response': result['response'].json()
-            }
-            
-        except Exception as e:
-            logger.error(f"Error in bulk index: {str(e)}")
-            return {
-                'status': 'error',
-                'message': f"Error in bulk index: {str(e)}"
-            }
-    
-    def create_index(self, index_name: str, settings: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Create an index in OpenSearch.
-        
-        Args:
-            index_name (str): Name of the index
-            settings (Dict[str, Any]): Index settings and mappings
-            
-        Returns:
-            Dict[str, Any]: Response from OpenSearch
-        """
-        try:
-            response = self._make_request('PUT', f'/{index_name}', data=settings)
-            if response.status_code == 200:
-                return {
-                    'status': 'success',
-                    'message': 'Index created successfully',
-                    'response': response.json()
-                }
-            elif response.status_code == 400:
-                error = response.json()
-                if error.get('error', {}).get('type') == 'resource_already_exists_exception':
-                    return {
-                        'status': 'warning',
-                        'message': 'Index already exists',
-                        'response': error
-                    }
-                else:
-                    return {
-                        'status': 'error',
-                        'message': f"Failed to create index: {error.get('error', {}).get('reason', 'Unknown error')}",
-                        'response': error
-                    }
-            else:
-                return {
-                    'status': 'error',
-                    'message': f"Failed to create index: {response.text}",
-                    'response': response.json()
-                }
-        except Exception as e:
-            logger.error(f"Error creating index: {str(e)}")
-            return {
-                'status': 'error',
-                'message': f"Error creating index: {str(e)}"
-            }
-    
-    def delete_index(self, index_name: str) -> Dict[str, Any]:
-        """
-        Delete an index from OpenSearch.
-        
-        Args:
-            index_name (str): Name of the index
-            
-        Returns:
-            Dict[str, Any]: Response from OpenSearch
-        """
-        try:
-            response = self._make_request('DELETE', f'/{index_name}')
-            if response.status_code == 200:
-                return {
-                    'status': 'success',
-                    'message': 'Index deleted successfully',
-                    'response': response.json()
-                }
-            elif response.status_code == 404:
-                return {
-                    'status': 'warning',
-                    'message': 'Index does not exist',
-                    'response': response.json()
-                }
-            else:
-                return {
-                    'status': 'error',
-                    'message': f"Failed to delete index: {response.text}",
-                    'response': response.json()
-                }
-        except Exception as e:
-            logger.error(f"Error deleting index: {str(e)}")
-            return {
-                'status': 'error',
-                'message': f"Error deleting index: {str(e)}"
-            }
-    
     def get_index_settings(self, index_name: str) -> Dict[str, Any]:
         """
         Get settings for an index.
@@ -557,188 +431,42 @@ class OpenSearchBaseManager:
         """
         try:
             response = self._make_request('GET', f'/{index_name}/_settings')
-            if response.status_code == 200:
+            if response['status'] == 'error':
+                return {
+                    'status': 'error',
+                    'message': f"Failed to get index settings: {response['response'].text}"
+                }
+            
+            if response['response'].status_code == 200:
                 return {
                     'status': 'success',
                     'message': 'Index settings retrieved successfully',
-                    'response': response.json()
+                    'response': response['response'].json()
                 }
-            elif response.status_code == 404:
+            elif response['response'].status_code == 404:
                 return {
                     'status': 'error',
                     'message': INDEX_NOT_EXIST_MESSAGE,
-                    'response': response.json()
+                    'response': response['response'].json()
                 }
             else:
                 return {
                     'status': 'error',
-                    'message': f"Failed to get index settings: {response.text}",
-                    'response': response.json()
+                    'message': f"Failed to get index settings: {response['response'].text}"
                 }
         except Exception as e:
-            logger.error(f"Error getting index settings: {str(e)}")
             return {
                 'status': 'error',
                 'message': f"Error getting index settings: {str(e)}"
             }
     
-    def update_index_settings(self, index_name: str, settings: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Update settings for an index.
-        
-        Args:
-            index_name (str): Name of the index
-            settings (Dict[str, Any]): New settings
-            
-        Returns:
-            Dict[str, Any]: Response from OpenSearch
-        """
-        try:
-            response = self._make_request('PUT', f'/{index_name}/_settings', data=settings)
-            if response.status_code == 200:
-                return {
-                    'status': 'success',
-                    'message': 'Index settings updated successfully',
-                    'response': response.json()
-                }
-            elif response.status_code == 404:
-                return {
-                    'status': 'error',
-                    'message': INDEX_NOT_EXIST_MESSAGE,
-                    'response': response.json()
-                }
-            else:
-                return {
-                    'status': 'error',
-                    'message': f"Failed to update index settings: {response.text}",
-                    'response': response.json()
-                }
-        except Exception as e:
-            logger.error(f"Error updating index settings: {str(e)}")
-            return {
-                'status': 'error',
-                'message': f"Error updating index settings: {str(e)}"
-            }
     
-    def search(self, index_name: str, query: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Search documents in an index.
-        
-        Args:
-            index_name (str): Name of the index
-            query (Dict[str, Any]): Search query
-            
-        Returns:
-            Dict[str, Any]: Search results
-        """
-        try:
-            response = self._make_request('POST', f'/{index_name}/_search', data=query)
-            if response.status_code == 200:
-                return {
-                    'status': 'success',
-                    'message': 'Search completed successfully',
-                    'response': response.json()
-                }
-            elif response.status_code == 404:
-                return {
-                    'status': 'error',
-                    'message': INDEX_NOT_EXIST_MESSAGE,
-                    'response': response.json()
-                }
-            else:
-                return {
-                    'status': 'error',
-                    'message': f"Failed to search documents: {response.text}",
-                    'response': response.json()
-                }
-        except Exception as e:
-            logger.error(f"Error searching documents: {str(e)}")
-            return {
-                'status': 'error',
-                'message': f"Error searching documents: {str(e)}"
-            }
-    
-    def count(self, index_name: str, query: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Count documents in an index.
-        
-        Args:
-            index_name (str): Name of the index
-            query (Dict[str, Any]): Count query
-            
-        Returns:
-            Dict[str, Any]: Count results
-        """
-        try:
-            response = self._make_request('POST', f'/{index_name}/_count', data=query)
-            if response.status_code == 200:
-                return {
-                    'status': 'success',
-                    'message': 'Count completed successfully',
-                    'response': response.json()
-                }
-            elif response.status_code == 404:
-                return {
-                    'status': 'error',
-                    'message': INDEX_NOT_EXIST_MESSAGE,
-                    'response': response.json()
-                }
-            else:
-                return {
-                    'status': 'error',
-                    'message': f"Failed to count documents: {response.text}",
-                    'response': response.json()
-                }
-        except Exception as e:
-            logger.error(f"Error counting documents: {str(e)}")
-            return {
-                'status': 'error',
-                'message': f"Error counting documents: {str(e)}"
-            }
-    
-    def scroll(self, index_name: str, query: Dict[str, Any], batch_size: int = 1000) -> Dict[str, Any]:
-        """
-        Scroll through documents in an index.
-        
-        Args:
-            index_name (str): Name of the index
-            query (Dict[str, Any]): Search query
-            batch_size (int): Number of documents per batch
-            
-        Returns:
-            Dict[str, Any]: Scroll results
-        """
-        try:
-            # Initialize scroll
-            query['size'] = batch_size
-            result = self._make_request(
-                'POST',
-                f'/{index_name}/_search?scroll=1m',
-                data=query
-            )
-            
-            if result['status'] == 'error':
-                return result
-                
-            return {
-                'status': 'success',
-                'message': 'Scroll initialized successfully',
-                'response': result['response']
-            }
-            
-        except Exception as e:
-            logger.error(f"Error scrolling documents: {str(e)}")
-            return {
-                'status': 'error',
-                'message': f"Error scrolling documents: {str(e)}"
-            }
-
     def _delete_index(self, index_name: str) -> Dict[str, Any]:
         """
         Delete an index from OpenSearch.
         
         Args:
-            index_name (str): Name of the index to delete
+            index_name (str): Name of the index
             
         Returns:
             dict: Response from OpenSearch with status and message
@@ -753,7 +481,7 @@ class OpenSearchBaseManager:
             
             # Delete the index
             response = self._make_request('DELETE', f'/{index_name}')
-            if response.status_code == 200:
+            if response['status'] == 'success' and response['response'].status_code == 200:
                 return {
                     'status': 'success',
                     'message': f"Successfully deleted index {index_name}"
@@ -761,7 +489,7 @@ class OpenSearchBaseManager:
             else:
                 return {
                     'status': 'error',
-                    'message': f"Failed to delete index {index_name}: {response.text}"
+                    'message': f"Failed to delete index {index_name}: {response['response'].text}"
                 }
         except requests.exceptions.RequestException as e:
             return {
