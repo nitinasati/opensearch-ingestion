@@ -9,27 +9,24 @@ A Python-based system for ingesting data from multiple sources (S3, local files,
 - Batch processing for optimal performance
 - Document count validation
 - Comprehensive error handling and logging
-- AWS S3 integration
 - OpenSearch bulk ingestion
 - Robust response handling for OpenSearch operations
 - Support for both local files and S3 sources
 - Resume and fresh load modes for interrupted operations
-- Alias management with validation
 - Flexible file source options (local folder, S3, individual files)
 - Upsert capability for updating existing documents (if source file has id field/attribute which uniquely identifies the document - must match with _id in index)
 
 ## Prerequisites
 
 - Python 3.8+
-- AWS credentials configured
-- OpenSearch cluster access
+- AWS IAM role with access to S3 and opensearch
 - Required Python packages (install using `pip install -r requirements.txt`)
 
 ## Configuration
 
 ### Authentication Options
 
-###OpenSearch Backend Role (Recommended)
+###OpenSearch Backend Role
 The system supports OpenSearch backend role authentication using AWS IAM roles. This is the recommended approach for production environments.
 
 1. Configure your OpenSearch domain to use IAM authentication
@@ -109,26 +106,28 @@ The `bulkupdate.py` script provides flexible options for ingesting data from var
    python bulkupdate.py --bucket my-bucket --prefix data/ --local-files local1.csv local2.json --index my_index
    ```
 
+Alteast one source is mandatory from #1, 2 or 3. All can be provided at the same time.
+
 #### Processing Modes
 
-- **Resume Mode** (continue from where it left off - fresh load if this argument is not added):
+- **Resume Mode** - optional (continue from where it left off - fresh load if this argument is not added):
   ```bash
   python bulkupdate.py --bucket my-bucket --prefix data/ --index my_index --resume
   ```
 
-- **Fresh Load Mode** (clear tracking file and process all files - this is optional argument and default is fresh load only):
+- **Fresh Load Mode** - optional (clear tracking file and process all files - this is optional argument and default is fresh load only):
   ```bash
   python bulkupdate.py --bucket my-bucket --prefix data/ --index my_index --fresh-load
   ```
 
 #### Performance Tuning
 
-- **Batch Size** (number of documents per batch):
+- **Batch Size** - optional (Number of documents to process in each batch (default: 10000)):
   ```bash
   python bulkupdate.py --bucket my-bucket --prefix data/ --index my_index --batch-size 1000
   ```
 
-- **Worker Threads** (number of parallel processing threads - optional argument and default is 4):
+- **Worker Threads** -optional (number of parallel processing threads - default is 4):
   ```bash
   python bulkupdate.py --bucket my-bucket --prefix data/ --index my_index --max-workers 4
   ```
@@ -157,7 +156,7 @@ The bulk ingestion tool supports two modes for handling file processing:
    - This is the default behavior when no flags are specified
    - Verifies document count based on processed records from bulk API responses
 
-3. **Upsert Mode** (`--upsert`):
+3. **Upsert Mode** (default behavior when id field is part of ingested files):
    - Updates existing documents if they exist in the index
    - Inserts new documents if they don't exist
    - Uses document ID from source files to identify existing documents
@@ -167,7 +166,7 @@ The bulk ingestion tool supports two modes for handling file processing:
 
 Note: You cannot specify `--resume` or omit this option for fresh-load which is default behavior.
 
-### Alias Management
+### Alias Management (for supporting zero downtime)
 
 The system includes functionality for managing OpenSearch aliases, allowing you to switch aliases between indices with validation:
 
@@ -187,7 +186,7 @@ python switch_alias.py --alias my_index_alias --source my_index_primary --target
 
 ### Parallel Processing
 
-The system now supports parallel processing of CSV and JSON files with the following features:
+The system  supports parallel processing of CSV and JSON files with the following features:
 - Configurable number of worker threads
 - Thread-safe document counting
 - Queue-based batch processing
@@ -369,7 +368,7 @@ Before running in production, perform rigorous testing:
 The system includes comprehensive error handling for:
 - S3 access issues
 - OpenSearch connection problems
-- CSV parsing errors
+- CSV/json parsing errors
 - Document validation failures
 - Worker thread exceptions
 - Response handling errors
@@ -397,20 +396,16 @@ Detailed logging is provided for:
 ## System Characteristics
 
 ### Load Type
-- This system is designed for **full load** operations only
-- It does not support delta/incremental loads
+- This system is designed for **full/delta load** operations
+- It does  support delta/incremental loads when dataset has id attribute to uniquely identity record
 - Each ingestion operation completely refreshes the target index with new data
 - The system follows a zero-downtime strategy to ensure data consistency during full refreshes
 
 ### Limitations
-- No support for partial updates or incremental data ingestion
-- Each ingestion requires processing the entire dataset from S3
+- No support for partial updates or incremental data ingestion if data set doesn't have id attribute (insert only behavior)
+- Each ingestion will perform processing the entire dataset from sources
 - Historical data changes are not tracked or preserved
 - Previous versions of records are overwritten during ingestion
-
-### AWS IAM Requirements
-
-The tool requires an IAM role with the following permissions:
 
 ### Environment Variables
 Required environment variables in `.env` file:

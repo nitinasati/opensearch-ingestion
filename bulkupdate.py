@@ -33,6 +33,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Queue
 import threading
 from file_processor import FileProcessor
+from datetime import datetime
 
 # Load environment variables
 load_dotenv()
@@ -278,7 +279,7 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             return "json"
         elif file_path.lower().endswith('.csv'):
             return "csv"
-        return None
+        return "unknown"
         
     def _process_files(self, all_files: List[Dict[str, Any]], index_name: str, resume: bool = False) -> Tuple[int, int]:
         """
@@ -392,6 +393,12 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
     
     def _format_verification_result(self, verification_result, total_rows, total_files, start_time):
         """Format verification result into a response dictionary."""
+        # Calculate total time based on start_time type
+        if isinstance(start_time, datetime):
+            total_time = time.time() - start_time.timestamp()
+        else:
+            total_time = time.time() - start_time
+            
         if verification_result["status"] == "error":
             return {
                 "status": "error",
@@ -400,29 +407,37 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                 "total_files_processed": total_files,
                 "expected_documents": verification_result["expected_count"],
                 "actual_documents": verification_result["actual_count"],
-                "total_time_seconds": round(time.time() - start_time, 2)
+                "total_time_seconds": round(total_time, 2)
             }
             
-        total_time = time.time() - start_time
         return {
             "status": "success",
+            "message": verification_result["message"],
             "total_rows_processed": total_rows,
             "total_files_processed": total_files,
-            "documents_indexed": verification_result["documents_indexed"],
-            "total_time_seconds": round(total_time, 2),
-            "average_time_per_file": round(total_time / total_files, 2) if total_files > 0 else 0,
-            "files_processed": total_rows > 0
+            "expected_documents": verification_result["expected_count"],
+            "actual_documents": verification_result["actual_count"],
+            "total_time_seconds": round(total_time, 2)
         }
     
     def _handle_verification_error(self, e, total_rows, total_files, start_time):
         """Handle verification error and return error response."""
         logger.error(f"Error verifying document count: {str(e)}")
+        
+        # Calculate total time based on start_time type
+        if isinstance(start_time, datetime):
+            total_time = time.time() - start_time.timestamp()
+        else:
+            total_time = time.time() - start_time
+            
         return {
             "status": "error",
             "message": f"Error verifying document count: {str(e)}",
             "total_rows_processed": total_rows,
             "total_files_processed": total_files,
-            "total_time_seconds": round(time.time() - start_time, 2)
+            "expected_documents": 0,
+            "actual_documents": 0,
+            "total_time_seconds": round(total_time, 2)
         }
     
     def _verify_results(self, index_name, total_rows, total_files, start_time, resume, initial_count):
@@ -580,15 +595,14 @@ def main():
         # Print results
         if result["status"] == "success":
             logger.info(f"Successfully processed {result['total_rows_processed']} rows from {result['total_files_processed']} files")
-            logger.info(f"Total documents indexed: {result['documents_indexed']}")
+            logger.info(f"Total documents indexed: {result['actual_documents']}")
             logger.info(f"Total time taken: {result['total_time_seconds']} seconds")
-            logger.info(f"Average time per file: {result['average_time_per_file']} seconds")
         else:
             logger.error(f"Failed to ingest data: {result['message']}")
             if 'expected_documents' in result and 'actual_documents' in result:
                 logger.error(f"Expected documents: {result['expected_documents']}, Actual documents: {result['actual_documents']}")
-            elif 'documents_indexed' in result:
-                logger.error(f"Documents indexed: {result['documents_indexed']}")
+            elif 'actual_documents' in result:
+                logger.error(f"Documents indexed: {result['actual_documents']}")
                 
     except ValueError as e:
         logger.error(f"Configuration error: {str(e)}")

@@ -109,9 +109,12 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
         count_response.json.return_value = {'count': 42}
         self.requests_mock.post.return_value = count_response
         
+        # Mock the _processed_count_from_bulk attribute
+        self.file_processor_mock._processed_count_from_bulk = 42
+        
         result = self.manager._verify_document_count('test-index', 42)
         self.assertEqual(result['status'], 'success')
-        self.assertEqual(result['message'], 'Document count verification successful')
+        self.assertEqual(result['message'], 'Document count verification successful: 42 documents match expected count')
         self.assertEqual(result['actual_count'], 42)
         self.assertEqual(result['expected_count'], 42)
     
@@ -123,9 +126,12 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
         count_response.json.return_value = {'count': 40}
         self.requests_mock.post.return_value = count_response
         
+        # Mock the _processed_count_from_bulk attribute
+        self.file_processor_mock._processed_count_from_bulk = 40
+        
         result = self.manager._verify_document_count('test-index', 42)
         self.assertEqual(result['status'], 'error')
-        self.assertEqual(result['message'], 'Document count mismatch')
+        self.assertEqual(result['message'], 'Document count mismatch: Expected 42, got 40')
         self.assertEqual(result['actual_count'], 40)
         self.assertEqual(result['expected_count'], 42)
     
@@ -144,35 +150,62 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
         """Test updating processed files."""
         # Mock file reading and writing
         with patch('builtins.open', new_callable=MagicMock) as mock_open:
-            mock_open.return_value.__enter__.return_value.read.return_value = json.dumps({
+            # Setup the mock to return a file-like object
+            mock_file = MagicMock()
+            mock_open.return_value.__enter__.return_value = mock_file
+            
+            # Setup the read method to return the initial data
+            mock_file.read.return_value = json.dumps({
                 'test-index': ['file1.csv']
             })
             
+            # Call the method
             self.manager._update_processed_files('test-index', 'file2.csv')
             
-            # Check that the file was written with the updated list
-            mock_open.assert_called_with(TRACKING_FILE, 'w')
-            written_data = mock_open.return_value.__enter__.return_value.write.call_args[0][0]
+            # Verify file operations
+            mock_open.assert_any_call(TRACKING_FILE, 'r')
+            mock_open.assert_any_call(TRACKING_FILE, 'w')
+            
+            # Get all write calls and combine them
+            written_data = ''.join(call.args[0] for call in mock_file.write.call_args_list)
+            
+            # Parse and verify the written data
             data = json.loads(written_data)
             self.assertEqual(data['test-index'], ['file1.csv', 'file2.csv'])
     
     def test_clear_processed_files(self):
         """Test clearing processed files."""
-        # Mock file reading and writing
-        with patch('builtins.open', new_callable=MagicMock) as mock_open:
-            mock_open.return_value.__enter__.return_value.read.return_value = json.dumps({
-                'test-index': ['file1.csv', 'file2.csv'],
-                'other-index': ['file3.csv']
-            })
-            
+        # Create test data
+        test_data = {
+            'test-index': ['file1.csv', 'file2.csv'],
+            'other-index': ['file3.csv']
+        }
+        expected_data = {
+            'test-index': [],
+            'other-index': ['file3.csv']
+        }
+        
+        # Mock file operations
+        mock_open = MagicMock()
+        mock_file = MagicMock()
+        mock_open.return_value.__enter__.return_value = mock_file
+        mock_file.read.return_value = json.dumps(test_data)
+        
+        with patch('builtins.open', mock_open):
+            # Call the method
             self.manager._clear_processed_files('test-index')
             
-            # Check that the file was written with the updated data
-            mock_open.assert_called_with(TRACKING_FILE, 'w')
-            written_data = mock_open.return_value.__enter__.return_value.write.call_args[0][0]
-            data = json.loads(written_data)
-            self.assertEqual(data['test-index'], [])
-            self.assertEqual(data['other-index'], ['file3.csv'])
+            # Verify file operations
+            mock_open.assert_any_call(TRACKING_FILE, 'r')
+            mock_open.assert_any_call(TRACKING_FILE, 'w')
+            
+            # Verify that write was called with the correct data
+            # Combine all write calls into a single string
+            written_data = ''.join(call.args[0] for call in mock_file.write.call_args_list)
+            
+            # Parse and verify the written data
+            written_json = json.loads(written_data)
+            self.assertEqual(written_json, expected_data)
     
     def test_get_file_identifier(self):
         """Test getting file identifier."""
@@ -300,9 +333,11 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
         
         # Check that the result contains the expected fields
         self.assertEqual(result['status'], 'success')
-        self.assertEqual(result['total_documents'], 42)
-        self.assertEqual(result['total_files'], 2)
-        self.assertIn('processing_time', result)
+        self.assertEqual(result['total_rows_processed'], 42)
+        self.assertEqual(result['total_files_processed'], 2)
+        self.assertEqual(result['expected_documents'], 42)
+        self.assertEqual(result['actual_documents'], 42)
+        self.assertIn('total_time_seconds', result)
     
     def test_handle_verification_error(self):
         """Test handling verification error."""
@@ -317,10 +352,12 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
         
         # Check that the result contains the expected fields
         self.assertEqual(result['status'], 'error')
-        self.assertEqual(result['message'], 'Test error')
-        self.assertEqual(result['total_documents'], 42)
-        self.assertEqual(result['total_files'], 2)
-        self.assertIn('processing_time', result)
+        self.assertEqual(result['message'], 'Error verifying document count: Test error')
+        self.assertEqual(result['total_rows_processed'], total_rows)
+        self.assertEqual(result['total_files_processed'], total_files)
+        self.assertEqual(result['expected_documents'], 0)
+        self.assertEqual(result['actual_documents'], 0)
+        self.assertIn('total_time_seconds', result)
     
     def test_verify_results_success(self):
         """Test verifying results successfully."""
@@ -341,9 +378,9 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
             
             # Check that the result contains the expected fields
             self.assertEqual(result['status'], 'success')
-            self.assertEqual(result['total_documents'], 42)
-            self.assertEqual(result['total_files'], 2)
-            self.assertIn('processing_time', result)
+            self.assertEqual(result['actual_documents'], 42)
+            self.assertEqual(result['total_files_processed'], 2)
+            self.assertIn('total_time_seconds', result)
     
     def test_verify_results_error(self):
         """Test verifying results with an error."""
@@ -359,10 +396,12 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
             
             # Check that the result contains the expected fields
             self.assertEqual(result['status'], 'error')
-            self.assertEqual(result['message'], 'Test error')
-            self.assertEqual(result['total_documents'], 42)
-            self.assertEqual(result['total_files'], 2)
-            self.assertIn('processing_time', result)
+            self.assertEqual(result['message'], 'Error verifying document count: Test error')
+            self.assertEqual(result['total_rows_processed'], total_rows)
+            self.assertEqual(result['total_files_processed'], total_files)
+            self.assertEqual(result['expected_documents'], 0)
+            self.assertEqual(result['actual_documents'], 0)
+            self.assertIn('total_time_seconds', result)
     
     def test_ingest_data_no_files(self):
         """Test ingesting data with no files."""
@@ -370,7 +409,7 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
         result = self.manager.ingest_data(index_name='test-index')
         
         # Check that the result contains the expected fields
-        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['status'], 'warning')
         self.assertEqual(result['message'], NO_FILES_MESSAGE)
     
     def test_ingest_data_success(self):

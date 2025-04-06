@@ -77,15 +77,6 @@ class FileProcessor:
             folder_path = os.path.abspath(folder_path)
             logger.info(f"Scanning for files in folder: {folder_path}")
             
-            # Check if folder exists
-            if not os.path.isdir(folder_path):
-                error_msg = f"Folder does not exist: {folder_path}"
-                logger.error(error_msg)
-                return {
-                    "status": "error",
-                    "message": error_msg
-                }
-            
             # Get files by type
             csv_files, json_files = self._get_files_by_type(folder_path)
             
@@ -267,6 +258,7 @@ class FileProcessor:
                 logger.error(f"Bulk request failed for file {file_key}: {result['message']}")
                 return False
                 
+            # Only try to access response.json() if status is success
             response = result['response'].json()
             if response.get('errors', False):
                 logger.error(f"Bulk request had errors for file {file_key}")

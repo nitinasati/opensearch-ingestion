@@ -370,6 +370,60 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
                 "message": error_msg
             }
 
+    def delete_alias(self, index_name: str, alias_name: str) -> Dict[str, Any]:
+        """
+        Delete an alias from an index.
+        
+        Args:
+            index_name (str): Name of the index
+            alias_name (str): Name of the alias to delete
+            
+        Returns:
+            Dict[str, Any]: Result containing status and message
+        """
+        try:
+            # Execute alias deletion
+            result = self._make_request(
+                'POST',
+                ALIASES_ENDPOINT,
+                data={
+                    "actions": [
+                        {
+                            "remove": {
+                                "index": index_name,
+                                "alias": alias_name
+                            }
+                        }
+                    ]
+                }
+            )
+            
+            if result['status'] == 'error':
+                return {
+                    'status': 'error',
+                    'message': f'Failed to delete alias: {result["message"]}'
+                }
+            
+            response = result['response']
+            if response.status_code == 200:
+                return {
+                    'status': 'success',
+                    'message': f'Successfully deleted alias {alias_name} from index {index_name}'
+                }
+            else:
+                return {
+                    'status': 'error',
+                    'message': f'Failed to delete alias. Status code: {response.status_code}'
+                }
+                
+        except Exception as e:
+            error_msg = f"Error deleting alias: {str(e)}"
+            logger.error(error_msg)
+            return {
+                'status': 'error',
+                'message': error_msg
+            }
+
 def main():
     """
     Main entry point for the alias switching script.
