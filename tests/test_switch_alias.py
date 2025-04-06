@@ -15,167 +15,189 @@ class TestOpenSearchAliasManager(unittest.TestCase):
     
     def setUp(self):
         """Set up test environment."""
-        # Create mock for OpenSearchBaseManager
-        self.base_manager_mock = MagicMock()
-        
-        # Apply patches
-        self.base_manager_patcher = patch('switch_alias.OpenSearchBaseManager', return_value=self.base_manager_mock)
-        self.base_manager_patcher.start()
-        
         # Initialize the manager
         self.manager = OpenSearchAliasManager()
+        
+        # Set up common mock methods
+        self.manager._verify_index_exists = MagicMock(return_value=True)
+        self.manager._get_index_count = MagicMock(return_value=100)
+        self.manager._make_request = MagicMock(return_value={
+            'status': 'success',
+            'response': MagicMock(status_code=200)
+        })
     
     def tearDown(self):
         """Clean up after tests."""
-        self.base_manager_patcher.stop()
+        pass
     
     def test_init(self):
         """Test initialization of the OpenSearchAliasManager class."""
         self.assertIsNotNone(self.manager)
-        self.base_manager_mock.assert_called_once()
-    
-    def test_create_alias_success(self):
-        """Test successful alias creation."""
-        # Mock the necessary methods
-        self.base_manager_mock.verify_index_exists.return_value = True
-        self.base_manager_mock._make_request.return_value = {
-            'status': 'success',
-            'response': MagicMock(status_code=200)
-        }
-        
-        # Create alias
-        result = self.manager.create_alias('test-index', 'test-alias')
-        
-        # Verify the result
-        self.assertEqual(result['status'], 'success')
-        self.assertEqual(result['message'], 'Successfully created alias test-alias for index test-index')
-        
-        # Verify that the necessary methods were called
-        self.base_manager_mock.verify_index_exists.assert_called_with('test-index')
-        self.base_manager_mock._make_request.assert_called()
-    
-    def test_create_alias_index_not_exists(self):
-        """Test alias creation when index does not exist."""
-        # Mock the verify_index_exists method
-        self.base_manager_mock.verify_index_exists.return_value = False
-        
-        # Create alias
-        result = self.manager.create_alias('test-index', 'test-alias')
-        
-        # Verify the result
-        self.assertEqual(result['status'], 'error')
-        self.assertEqual(result['message'], 'Index test-index does not exist')
-        
-        # Verify that _make_request was not called
-        self.base_manager_mock._make_request.assert_not_called()
-    
-    def test_create_alias_request_error(self):
-        """Test alias creation when request fails."""
-        # Mock the necessary methods
-        self.base_manager_mock.verify_index_exists.return_value = True
-        self.base_manager_mock._make_request.return_value = {
-            'status': 'error',
-            'message': 'Request failed'
-        }
-        
-        # Create alias
-        result = self.manager.create_alias('test-index', 'test-alias')
-        
-        # Verify the result
-        self.assertEqual(result['status'], 'error')
-        self.assertEqual(result['message'], 'Failed to create alias: Request failed')
     
     def test_switch_alias_success(self):
         """Test successful alias switching."""
-        # Mock the necessary methods
-        self.base_manager_mock.verify_index_exists.return_value = True
-        self.base_manager_mock._make_request.return_value = {
-            'status': 'success',
-            'response': MagicMock(status_code=200)
-        }
+        # Mock _make_request to return success for all requests
+        mock_alias_response = MagicMock()
+        mock_alias_response.status_code = 200
+        mock_alias_response.json = MagicMock(return_value={
+            'old-index': {
+                'aliases': {
+                    'test-alias': {}
+                }
+            }
+        })
         
+        mock_switch_response = MagicMock()
+        mock_switch_response.status_code = 200
+        
+        mock_index_response = MagicMock()
+        mock_index_response.status_code = 200
+        
+        mock_count_response = MagicMock()
+        mock_count_response.status_code = 200
+        mock_count_response.json = MagicMock(return_value={'count': 100})
+        
+        def mock_make_request(method, endpoint, data=None, headers=None):
+            if endpoint == '/_alias/test-alias':
+                return {
+                    'status': 'success',
+                    'response': mock_alias_response
+                }
+            elif endpoint == '/_aliases':
+                return {
+                    'status': 'success',
+                    'response': mock_switch_response
+                }
+            elif endpoint == '/old-index' or endpoint == '/new-index':
+                return {
+                    'status': 'success',
+                    'response': mock_index_response
+                }
+            elif endpoint == '/old-index/_count' or endpoint == '/new-index/_count':
+                return {
+                    'status': 'success',
+                    'response': mock_count_response
+                }
+            return {
+                'status': 'error',
+                'message': 'Unexpected request'
+            }
+        
+        self.manager._make_request = MagicMock(side_effect=mock_make_request)
+
         # Switch alias
         result = self.manager.switch_alias('test-alias', 'old-index', 'new-index')
-        
+
         # Verify the result
         self.assertEqual(result['status'], 'success')
         self.assertEqual(result['message'], 'Successfully switched alias test-alias from old-index to new-index')
-        
-        # Verify that the necessary methods were called
-        self.base_manager_mock.verify_index_exists.assert_any_call('old-index')
-        self.base_manager_mock.verify_index_exists.assert_any_call('new-index')
-        self.base_manager_mock._make_request.assert_called()
+        self.assertEqual(result['source_count'], 100)
+        self.assertEqual(result['target_count'], 100)
+        self.assertEqual(result['percentage_diff'], 0)
+
+        # Verify method calls
+        self.manager._make_request.assert_called()
     
     def test_switch_alias_index_not_exists(self):
-        """Test alias switching when index does not exist."""
-        # Mock the verify_index_exists method
-        self.base_manager_mock.verify_index_exists.return_value = False
+        """Test switching alias when source index does not exist."""
+        # Mock _get_alias_info to return valid alias info
+        self.manager._get_alias_info = MagicMock(return_value={
+            'test-alias': {
+                'aliases': {
+                    'test-alias': {}
+                }
+            }
+        })
         
-        # Switch alias
-        result = self.manager.switch_alias('test-alias', 'old-index', 'new-index')
+        # Mock _verify_index_exists to return False for source index
+        self.manager._verify_index_exists = MagicMock(return_value=False)
         
-        # Verify the result
+        # Mock _make_request to return success for target index
+        self.manager._make_request = MagicMock(return_value={
+            'status': 'success',
+            'response': MagicMock(status_code=200)
+        })
+        
+        # Mock _get_index_count to return 100 for both indices
+        self.manager._get_index_count = MagicMock(return_value=100)
+        
+        # Call switch_alias
+        result = self.manager.switch_alias('test-alias', 'test-index', 'test-index-new')
+        
+        # Verify result
         self.assertEqual(result['status'], 'error')
-        self.assertEqual(result['message'], 'Index old-index or new-index does not exist')
+        self.assertEqual(result['message'], 'Source index test-index does not exist')
         
-        # Verify that _make_request was not called
-        self.base_manager_mock._make_request.assert_not_called()
+        # Verify method calls
+        self.manager._get_alias_info.assert_called_once_with('test-alias')
+        self.manager._verify_index_exists.assert_called_once_with('test-index')
+        self.manager._make_request.assert_not_called()
     
     def test_switch_alias_request_error(self):
         """Test alias switching when request fails."""
-        # Mock the necessary methods
-        self.base_manager_mock.verify_index_exists.return_value = True
-        self.base_manager_mock._make_request.return_value = {
-            'status': 'error',
-            'message': 'Request failed'
-        }
+        # Mock _get_alias_info to return valid alias info
+        self.manager._get_alias_info = MagicMock(return_value={
+            'old-index': {
+                'aliases': {
+                    'test-alias': {}
+                }
+            }
+        })
         
-        # Switch alias
+        # Mock _verify_index_exists to return True for both indices
+        self.manager._verify_index_exists = MagicMock(return_value=True)
+        
+        # Mock _make_request to return success for alias info but error for switch operation
+        def mock_make_request(method, path, data=None, headers=None):
+            if path == '/_alias/test-alias':
+                return {
+                    'status': 'success',
+                    'response': MagicMock(
+                        status_code=200,
+                        json=lambda: {
+                            'old-index': {
+                                'aliases': {
+                                    'test-alias': {}
+                                }
+                            }
+                        }
+                    )
+                }
+            elif path == '/_aliases':
+                return {
+                    'status': 'error',
+                    'message': 'Request failed'
+                }
+            return {
+                'status': 'success',
+                'response': MagicMock(status_code=200)
+            }
+        
+        self.manager._make_request = MagicMock(side_effect=mock_make_request)
+        
+        # Mock _get_index_count to return 100 for both indices
+        self.manager._get_index_count = MagicMock(return_value=100)
+        
+        # Call switch_alias
         result = self.manager.switch_alias('test-alias', 'old-index', 'new-index')
         
-        # Verify the result
+        # Verify result
         self.assertEqual(result['status'], 'error')
         self.assertEqual(result['message'], 'Failed to switch alias: Request failed')
+        
+        # Verify method calls
+        self.manager._get_alias_info.assert_called_once_with('test-alias')
+        self.manager._verify_index_exists.assert_any_call('old-index')
+        self.manager._verify_index_exists.assert_any_call('new-index')
+        self.manager._make_request.assert_called()
     
-    def test_delete_alias_success(self):
-        """Test successful alias deletion."""
-        # Mock the necessary methods
-        self.base_manager_mock._make_request.return_value = {
-            'status': 'success',
-            'response': MagicMock(status_code=200)
-        }
-        
-        # Delete alias
-        result = self.manager.delete_alias('test-index', 'test-alias')
-        
-        # Verify the result
-        self.assertEqual(result['status'], 'success')
-        self.assertEqual(result['message'], 'Successfully deleted alias test-alias from index test-index')
-        
-        # Verify that _make_request was called
-        self.base_manager_mock._make_request.assert_called()
-    
-    def test_delete_alias_request_error(self):
-        """Test alias deletion when request fails."""
+    def test_get_alias_info_success(self):
+        """Test successful alias info retrieval."""
         # Mock the _make_request method
-        self.base_manager_mock._make_request.return_value = {
-            'status': 'error',
-            'message': 'Request failed'
-        }
-        
-        # Delete alias
-        result = self.manager.delete_alias('test-index', 'test-alias')
-        
-        # Verify the result
-        self.assertEqual(result['status'], 'error')
-        self.assertEqual(result['message'], 'Failed to delete alias: Request failed')
-    
-    def test_get_alias_success(self):
-        """Test successful alias retrieval."""
-        # Mock the _make_request method
-        self.base_manager_mock._make_request.return_value = {
+        self.manager._make_request = MagicMock(return_value={
             'status': 'success',
             'response': MagicMock(
+                status_code=200,
                 json=lambda: {
                     'test-index': {
                         'aliases': {
@@ -184,53 +206,37 @@ class TestOpenSearchAliasManager(unittest.TestCase):
                     }
                 }
             )
-        }
+        })
         
-        # Get alias
-        result = self.manager.get_alias('test-index', 'test-alias')
+        # Get alias info
+        result = self.manager._get_alias_info('test-alias')
         
         # Verify the result
-        self.assertEqual(result['status'], 'success')
-        self.assertTrue(result['exists'])
+        self.assertIsNotNone(result)
+        self.assertEqual(result['test-index']['aliases']['test-alias'], {})
         
-        # Verify that _make_request was called
-        self.base_manager_mock._make_request.assert_called()
+        # Verify that _make_request was called with correct parameters
+        self.manager._make_request.assert_called_once_with('GET', '/_alias/test-alias')
     
-    def test_get_alias_not_exists(self):
-        """Test alias retrieval when alias does not exist."""
+    def test_get_alias_info_not_exists(self):
+        """Test alias info retrieval when alias does not exist."""
         # Mock the _make_request method
-        self.base_manager_mock._make_request.return_value = {
+        self.manager._make_request = MagicMock(return_value={
             'status': 'success',
             'response': MagicMock(
-                json=lambda: {
-                    'test-index': {
-                        'aliases': {}
-                    }
-                }
+                status_code=200,
+                json=lambda: {}
             )
-        }
+        })
         
-        # Get alias
-        result = self.manager.get_alias('test-index', 'test-alias')
-        
-        # Verify the result
-        self.assertEqual(result['status'], 'success')
-        self.assertFalse(result['exists'])
-    
-    def test_get_alias_request_error(self):
-        """Test alias retrieval when request fails."""
-        # Mock the _make_request method
-        self.base_manager_mock._make_request.return_value = {
-            'status': 'error',
-            'message': 'Request failed'
-        }
-        
-        # Get alias
-        result = self.manager.get_alias('test-index', 'test-alias')
+        # Get alias info
+        result = self.manager._get_alias_info('test-alias')
         
         # Verify the result
-        self.assertEqual(result['status'], 'error')
-        self.assertEqual(result['message'], 'Failed to get alias: Request failed')
+        self.assertEqual(result, {})
+        
+        # Verify that _make_request was called with correct parameters
+        self.manager._make_request.assert_called_once_with('GET', '/_alias/test-alias')
 
 if __name__ == '__main__':
     unittest.main() 

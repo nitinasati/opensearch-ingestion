@@ -46,7 +46,7 @@ class OpenSearchReindexManager(OpenSearchBaseManager):
     
     def reindex(self, source_index: str, target_index: str) -> Dict[str, Any]:
         """
-        Reindex data from source index to target index.
+        Reindex data from source index to target index using the OpenSearch _reindex API.
         
         Args:
             source_index (str): Name of the source index
@@ -54,11 +54,6 @@ class OpenSearchReindexManager(OpenSearchBaseManager):
             
         Returns:
             Dict[str, Any]: Result containing status and details
-            
-        Raises:
-            requests.exceptions.RequestException: If there's an error with the OpenSearch request
-            ValueError: If there's an error with index validation
-            OpenSearchException: If there's an error with OpenSearch operations
         """
         try:
             # Verify source index exists
@@ -72,28 +67,46 @@ class OpenSearchReindexManager(OpenSearchBaseManager):
             doc_count = self._get_index_count(source_index)
             if doc_count == 0:
                 return {
-                    "status": "warning",
+                    "status": "error",
                     "message": f"Source index {source_index} is empty"
                 }
             
+            # Validate and clean up target index
+            cleanup_result = self.index_manager.validate_and_cleanup_index(target_index)
+            if cleanup_result['status'] == 'error':
+                return cleanup_result
+            
             try:
-                # Scroll through source index
-                documents = self.scroll_index(source_index)
+                # Use the _reindex API to copy documents from source to target
+                reindex_body = {
+                    "source": {
+                        "index": source_index
+                    },
+                    "dest": {
+                        "index": target_index
+                    }
+                }
                 
-                # Extract _source from each document
-                sources = [doc['_source'] for doc in documents]
+                # Make the reindex request
+                reindex_result = self._make_request(
+                    'POST',
+                    '/_reindex',
+                    data=reindex_body
+                )
                 
-                # Bulk index into target index
-                bulk_result = self.bulk_index(target_index, sources)
-                if bulk_result['status'] == 'error':
+                if reindex_result['status'] == 'error':
                     return {
                         "status": "error",
-                        "message": f"Failed to reindex documents: {bulk_result['message']}"
+                        "message": f"Failed to reindex documents: {reindex_result['message']}"
                     }
+                
+                # Get the reindex response
+                response_data = reindex_result['response'].json()
+                reindexed_count = response_data.get('total', 0)
                 
                 return {
                     "status": "success",
-                    "message": f"Successfully reindexed {doc_count} documents from {source_index} to {target_index}"
+                    "message": f"Successfully reindexed {reindexed_count} documents from {source_index} to {target_index}"
                 }
                 
             except Exception as e:
@@ -109,42 +122,6 @@ class OpenSearchReindexManager(OpenSearchBaseManager):
                 "status": "error",
                 "message": error_msg
             }
-
-    def scroll_index(self, index_name: str) -> List[Dict[str, Any]]:
-        """
-        Scroll through all documents in an index.
-        
-        Args:
-            index_name (str): Name of the index to scroll
-            
-        Returns:
-            List[Dict[str, Any]]: List of documents with their sources
-        """
-        try:
-            # Initialize scroll with a match_all query
-            query = {
-                "query": {
-                    "match_all": {}
-                },
-                "size": 1000  # Batch size
-            }
-            
-            # Start scrolling
-            scroll_result = self.scroll(index_name, query)
-            if scroll_result['status'] == 'error':
-                raise OpenSearchException(scroll_result['message'])
-                
-            # Extract documents from the response
-            response_data = scroll_result['response'].json()
-            hits = response_data.get('hits', {}).get('hits', [])
-            
-            # Return the hits directly
-            return hits
-            
-        except Exception as e:
-            error_msg = f"Error scrolling index {index_name}: {str(e)}"
-            logger.error(error_msg)
-            raise OpenSearchException(error_msg)
 
 def main():
     """
