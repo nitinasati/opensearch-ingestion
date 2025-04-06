@@ -201,31 +201,6 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
                     "message": error_msg
                 }
             
-            # Calculate percentage difference
-            if target_count != source_count:
-                max_diff = max(source_count, target_count)
-                min_diff = min(source_count, target_count)
-                percentage_diff = ((max_diff - min_diff) / max_diff) * 100
-                
-                logger.info(f"Document count threshold: {threshold}%")
-                
-                logger.info(f"Source index count: {source_count}")
-                logger.info(f"Target index count: {target_count}")
-                logger.info(f"Document count difference: {percentage_diff:.2f}%")
-                logger.info(f"Threshold: {threshold}%")
-            
-                if percentage_diff > threshold:
-                    error_msg = f"Document count difference ({percentage_diff:.2f}%) exceeds {threshold}% threshold"
-                    logger.error(error_msg)
-                    return {
-                        "status": "error",
-                        "message": error_msg,
-                        "source_count": source_count,
-                        "target_count": target_count,
-                        "percentage_diff": percentage_diff,
-                        "threshold": threshold
-                    }
-            
             success_msg = "Document count validation passed"
             logger.info(success_msg)
             return {
@@ -268,6 +243,14 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
         
         try:
 
+            # checking source and target index are same 
+            if source_index == target_index:
+                error_msg = f"Source {source_index} and target index {target_index} are the same hence aborting the operation"
+                logger.error(error_msg)
+                return {
+                    "status": "error",
+                    "message": error_msg
+                }
             # Get current alias information
             alias_info = self._get_alias_info(alias_name)
             if not alias_info:
@@ -368,60 +351,6 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
             return {
                 "status": "error",
                 "message": error_msg
-            }
-
-    def delete_alias(self, index_name: str, alias_name: str) -> Dict[str, Any]:
-        """
-        Delete an alias from an index.
-        
-        Args:
-            index_name (str): Name of the index
-            alias_name (str): Name of the alias to delete
-            
-        Returns:
-            Dict[str, Any]: Result containing status and message
-        """
-        try:
-            # Execute alias deletion
-            result = self._make_request(
-                'POST',
-                ALIASES_ENDPOINT,
-                data={
-                    "actions": [
-                        {
-                            "remove": {
-                                "index": index_name,
-                                "alias": alias_name
-                            }
-                        }
-                    ]
-                }
-            )
-            
-            if result['status'] == 'error':
-                return {
-                    'status': 'error',
-                    'message': f'Failed to delete alias: {result["message"]}'
-                }
-            
-            response = result['response']
-            if response.status_code == 200:
-                return {
-                    'status': 'success',
-                    'message': f'Successfully deleted alias {alias_name} from index {index_name}'
-                }
-            else:
-                return {
-                    'status': 'error',
-                    'message': f'Failed to delete alias. Status code: {response.status_code}'
-                }
-                
-        except Exception as e:
-            error_msg = f"Error deleting alias: {str(e)}"
-            logger.error(error_msg)
-            return {
-                'status': 'error',
-                'message': error_msg
             }
 
 def main():

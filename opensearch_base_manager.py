@@ -155,44 +155,28 @@ class OpenSearchBaseManager:
             Dict[str, Any]: Response with status and message
             
         Raises:
-            requests.exceptions.RequestException: If all retry attempts fail
+            requests.exceptions.RequestException: If the request fails
         """
         url = f"https://{self.opensearch_endpoint}{path}"
         request_headers = self._prepare_headers(headers)
         
-        max_retries = 3
-        retry_count = 0
-        last_exception = None
-        
-        while retry_count < max_retries:
-            try:
-                logger.debug(f"Making request to OpenSearch: {method} {url} (Attempt {retry_count + 1}/{max_retries})")
-                
-                response = self._execute_request(method, url, request_headers, data)
-                response.raise_for_status()
-                return {
-                    'status': 'success',
-                    'message': 'Request completed successfully',
-                    'response': response
-                }
-                
-            except requests.exceptions.RequestException as e:
-                last_exception = e
-                retry_count += 1
-                self._log_request_error(e, retry_count, max_retries)
-                
-                if retry_count < max_retries:
-                    # Exponential backoff: 1s, 2s, 4s
-                    wait_time = 2 ** (retry_count - 1)
-                    logger.info(f"Retrying in {wait_time} seconds...")
-                    import time
-                    time.sleep(wait_time)
-                else:
-                    logger.error(f"Failed to make request to OpenSearch after {max_retries} attempts. Giving up.")
-                    return {
-                        'status': 'error',
-                        'message': f"Failed to make request to OpenSearch after {max_retries} attempts: {str(last_exception)}"
-                    }
+        try:
+            logger.debug(f"Making request to OpenSearch: {method} {url}")
+            
+            response = self._execute_request(method, url, request_headers, data)
+            response.raise_for_status()
+            return {
+                'status': 'success',
+                'message': 'Request completed successfully',
+                'response': response
+            }
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error making request to OpenSearch: {str(e)}")
+            return {
+                'status': 'error',
+                'message': f"Failed to make request to OpenSearch: {str(e)}"
+            }
     
     def _prepare_headers(self, headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
         """Prepare request headers."""
