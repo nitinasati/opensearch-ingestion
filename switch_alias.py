@@ -28,6 +28,9 @@ from typing import Optional, Dict, Any
 # Load environment variables
 load_dotenv()
 
+# Constants
+ALIASES_ENDPOINT = '/_aliases'
+
 # Create log directory if it doesn't exist
 logger = logging.getLogger(__name__)
 
@@ -44,16 +47,14 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
     - Managing alias operations
     """
     
-    def __init__(self, opensearch_endpoint: Optional[str] = None, 
-                 verify_ssl: bool = False):
+    def __init__(self, opensearch_endpoint: Optional[str] = None):
         """
-        Initialize the alias manager.
+        Initialize the OpenSearch alias manager.
         
         Args:
             opensearch_endpoint (str, optional): The OpenSearch cluster endpoint URL
-            verify_ssl (bool): Whether to verify SSL certificates
         """
-        super().__init__(opensearch_endpoint, verify_ssl)
+        super().__init__(opensearch_endpoint=opensearch_endpoint)
         logger.info(f"Initialized OpenSearchAliasManager with endpoint: {self.opensearch_endpoint}")
 
     def _get_alias_info(self, alias_name: str) -> Dict[str, Any]:
@@ -96,7 +97,7 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
         try:
             response = self._make_request(
                 'POST',
-                f'/_aliases',
+                ALIASES_ENDPOINT,
                 data={
                     "actions": [
                         {
@@ -140,7 +141,7 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
         try:
             response = self._make_request(
                 'POST',
-                f'/_aliases',
+                ALIASES_ENDPOINT,
                 data={
                     "actions": [
                         {
@@ -266,6 +267,17 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
         logger.info(f"Starting alias switch operation for {alias_name} from {source_index} to {target_index}")
         
         try:
+
+            # Get current alias information
+            alias_info = self._get_alias_info(alias_name)
+            if not alias_info:
+                error_msg = f"Alias {alias_name} does not exist"
+                logger.error(error_msg)
+                return {
+                    "status": "error",
+                    "message": error_msg
+                }
+
             # Verify both indices exist
             if not self._verify_index_exists(source_index):
                 error_msg = f"Source index {source_index} does not exist"
@@ -289,15 +301,6 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
                 logger.error(f"Document count validation failed: {count_validation['message']}")
                 return count_validation
             
-            # Get current alias information
-            alias_info = self._get_alias_info(alias_name)
-            if not alias_info:
-                error_msg = f"Alias {alias_name} does not exist"
-                logger.error(error_msg)
-                return {
-                    "status": "error",
-                    "message": error_msg
-                }
             
             # Prepare alias update request
             alias_body = {
@@ -321,7 +324,7 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
             logger.info("Executing alias switch operation")
             result = self._make_request(
                 'POST',
-                f'/_aliases',
+                ALIASES_ENDPOINT,
                 data=alias_body
             )
             

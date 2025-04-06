@@ -59,7 +59,7 @@ Start-Sleep -Seconds 5
 # Step 2: Switch Alias to Secondary
 Write-Log "Step 2: Switching Alias to Secondary"
 $step2StartTime = Get-Date
-python switch_alias.py --alias member_index_alias --source member_index_primary --target member_index_secondary
+python switch_alias.py --alias member_search_alias --source member_index_primary --target member_index_secondary
 if (-not (Test-CommandSuccess $LASTEXITCODE)) {
     Write-Log "Error: Failed to switch alias to secondary"
     exit 1
@@ -67,31 +67,68 @@ if (-not (Test-CommandSuccess $LASTEXITCODE)) {
 $step2Duration = (Get-Date) - $step2StartTime
 Write-Log "Step 2 completed in $($step2Duration.TotalSeconds) seconds"
 
-# Wait 5 seconds between steps
 Start-Sleep -Seconds 5
 
 # Step 3: Bulk Update Primary Index
-Write-Log "Step 3: Bulk Updating Primary Index"
+Write-Log "Step 3: Bulk Updating Primary Index with local file"
 $step3StartTime = Get-Date
-python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index member_index_primary --batch-size 1000
+python bulkupdate.py --local-files ./testdata/member_data1.json --index member_index_primary --batch-size 1000 --max-workers 4
 if (-not (Test-CommandSuccess $LASTEXITCODE)) {
     Write-Log "Error: Failed to bulk update primary index"
     exit 1
 }
 $step3Duration = (Get-Date) - $step3StartTime
-Write-Log "Step 3 completed in $($step3Duration.TotalSeconds) seconds"
+Write-Log "Step 3 (local folder) completed in $($step3Duration.TotalSeconds) seconds"
 
 # Wait 5 seconds between steps
 Start-Sleep -Seconds 5
 
+
+# Step 3: Bulk Update Primary Index
+Write-Log "Step 3: Bulk Updating Primary Index with s3 bucket"
+$step3StartTime = Get-Date
+python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index member_index_primary --batch-size 1000 --resume
+if (-not (Test-CommandSuccess $LASTEXITCODE)) {
+    Write-Log "Error: Failed to bulk update primary index"
+    exit 1
+}
+$step3Duration = (Get-Date) - $step3StartTime
+Write-Log "Step 3 (s3 bucket) completed in $($step3Duration.TotalSeconds) seconds"
+
+Start-Sleep -Seconds 5
+# Step 3: Bulk Update Primary Index
+Write-Log "Step 3: Bulk Updating Primary Index with local folder"
+$step3StartTime = Get-Date
+python bulkupdate.py --local-folder ./testdata --index member_index_primary --batch-size 1000 --max-workers 4 
+if (-not (Test-CommandSuccess $LASTEXITCODE)) {
+    Write-Log "Error: Failed to bulk update primary index"
+    exit 1
+}
+$step3Duration = (Get-Date) - $step3StartTime
+Write-Log "Step 3 (local folder with resume) completed in $($step3Duration.TotalSeconds) seconds"
+
+Start-Sleep -Seconds 5
+# Step 3: Bulk Update Primary Index
+Write-Log "Step 3: Bulk Updating Primary Index with local folder"
+$step3StartTime = Get-Date
+python bulkupdate.py --local-folder ./testdata --index member_index_primary --batch-size 1000 --max-workers 4 --resume
+if (-not (Test-CommandSuccess $LASTEXITCODE)) {
+    Write-Log "Error: Failed to bulk update primary index"
+    exit 1
+}
+$step3Duration = (Get-Date) - $step3StartTime
+Write-Log "Step 3 (local folder with resume) completed in $($step3Duration.TotalSeconds) seconds"
+
 # Step 4: Switch Alias back to Primary
 Write-Log "Step 4: Switching Alias back to Primary"
 $step4StartTime = Get-Date
-python switch_alias.py --alias member_index_alias --source member_index_secondary --target member_index_primary
+python switch_alias.py --alias member_search_alias --source member_index_secondary --target member_index_primary 
 if (-not (Test-CommandSuccess $LASTEXITCODE)) {
     Write-Log "Error: Failed to switch alias back to primary"
     exit 1
 }
+
+
 $step4Duration = (Get-Date) - $step4StartTime
 Write-Log "Step 4 completed in $($step4Duration.TotalSeconds) seconds"
 

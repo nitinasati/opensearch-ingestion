@@ -8,7 +8,7 @@ authentication, SSL handling, and common operations.
 import requests
 import logging
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
 import urllib3
 import boto3
@@ -18,6 +18,10 @@ import json
 
 # Load environment variables
 load_dotenv()
+
+# Constants
+ALIASES_ENDPOINT = '/_aliases'
+INDEX_NOT_EXIST_MESSAGE = 'Index does not exist'
 
 logger = logging.getLogger(__name__)
 
@@ -36,21 +40,19 @@ class OpenSearchBaseManager:
     # Content type constant
     CONTENT_TYPE_JSON = 'application/json'
     
-    def __init__(self, opensearch_endpoint: Optional[str] = None, 
-                 verify_ssl: bool = False):
+    def __init__(self, opensearch_endpoint: Optional[str] = None):
         """
         Initialize the OpenSearch base manager.
         
         Args:
             opensearch_endpoint (str, optional): The OpenSearch cluster endpoint URL
-            verify_ssl (bool): Whether to verify SSL certificates
             
         Raises:
             ValueError: If OpenSearch endpoint is not provided
             OpenSearchException: If connection to OpenSearch fails after maximum retries
         """
         self.opensearch_endpoint = opensearch_endpoint or os.getenv('OPENSEARCH_ENDPOINT')
-        self.verify_ssl = verify_ssl
+        self.verify_ssl = os.getenv('VERIFY_SSL', 'false').lower() == 'true'
         
         if not self.opensearch_endpoint:
             raise ValueError("OpenSearch endpoint is required")
@@ -63,6 +65,7 @@ class OpenSearchBaseManager:
         
         logger.info(f"Initializing OpenSearch connection with endpoint: {self.opensearch_endpoint}")
         logger.info(f"Using AWS region: {self.aws_region}")
+        logger.info(f"Using SSL verification: {self.verify_ssl} (from VERIFY_SSL environment variable)")
         
         # Initialize AWS session and auth
         self.session = boto3.Session()
@@ -116,13 +119,7 @@ class OpenSearchBaseManager:
             except requests.exceptions.RequestException as e:
                 last_exception = e
                 retry_count += 1
-                logger.error(f"Error connecting to OpenSearch (Attempt {retry_count}/{max_retries}): {str(e)}")
-                
-                if hasattr(e, 'response') and e.response is not None:
-                    if hasattr(e.response, 'text'):
-                        logger.error(f"Response text: {e.response.text}")
-                    if hasattr(e.response, 'headers'):
-                        logger.error(f"Response headers: {e.response.headers}")
+                self._log_connection_error(e, retry_count, max_retries)
                 
                 if retry_count < max_retries:
                     # Exponential backoff: 1s, 2s, 4s
@@ -133,6 +130,16 @@ class OpenSearchBaseManager:
                 else:
                     logger.error(f"Failed to connect to OpenSearch after {max_retries} attempts. Giving up.")
                     raise OpenSearchException(f"Failed to connect to OpenSearch after {max_retries} attempts: {str(last_exception)}")
+    
+    def _log_connection_error(self, exception, retry_count, max_retries):
+        """Log connection error details."""
+        logger.error(f"Error connecting to OpenSearch (Attempt {retry_count}/{max_retries}): {str(exception)}")
+        
+        if hasattr(exception, 'response') and exception.response is not None:
+            if hasattr(exception.response, 'text'):
+                logger.error(f"Response text: {exception.response.text}")
+            if hasattr(exception.response, 'headers'):
+                logger.error(f"Response headers: {exception.response.headers}")
 
     def _make_request(self, method: str, path: str, data: Optional[Dict[str, Any]] = None, headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """
@@ -151,14 +158,7 @@ class OpenSearchBaseManager:
             requests.exceptions.RequestException: If all retry attempts fail
         """
         url = f"https://{self.opensearch_endpoint}{path}"
-        request_headers = {
-            'Content-Type': self.CONTENT_TYPE_JSON,
-            'Accept': self.CONTENT_TYPE_JSON
-        }
-        
-        # Update headers with any additional headers provided
-        if headers:
-            request_headers.update(headers)
+        request_headers = self._prepare_headers(headers)
         
         max_retries = 3
         retry_count = 0
@@ -168,35 +168,7 @@ class OpenSearchBaseManager:
             try:
                 logger.debug(f"Making request to OpenSearch: {method} {url} (Attempt {retry_count + 1}/{max_retries})")
                 
-                # Determine if data is JSON or string
-                if data is not None:
-                    if isinstance(data, dict):
-                        response = requests.request(
-                            method=method,
-                            url=url,
-                            headers=request_headers,
-                            json=data,
-                            auth=self.auth,
-                            verify=self.verify_ssl
-                        )
-                    else:
-                        response = requests.request(
-                            method=method,
-                            url=url,
-                            headers=request_headers,
-                            data=data,
-                            auth=self.auth,
-                            verify=self.verify_ssl
-                        )
-                else:
-                    response = requests.request(
-                        method=method,
-                        url=url,
-                        headers=request_headers,
-                        auth=self.auth,
-                        verify=self.verify_ssl
-                    )
-                    
+                response = self._execute_request(method, url, request_headers, data)
                 response.raise_for_status()
                 return {
                     'status': 'success',
@@ -207,13 +179,7 @@ class OpenSearchBaseManager:
             except requests.exceptions.RequestException as e:
                 last_exception = e
                 retry_count += 1
-                logger.error(f"Error making request to OpenSearch (Attempt {retry_count}/{max_retries}): {str(e)}")
-                
-                if hasattr(e, 'response') and e.response is not None:
-                    if hasattr(e.response, 'text'):
-                        logger.error(f"Response text: {e.response.text}")
-                    if hasattr(e.response, 'headers'):
-                        logger.error(f"Response headers: {e.response.headers}")
+                self._log_request_error(e, retry_count, max_retries)
                 
                 if retry_count < max_retries:
                     # Exponential backoff: 1s, 2s, 4s
@@ -227,6 +193,59 @@ class OpenSearchBaseManager:
                         'status': 'error',
                         'message': f"Failed to make request to OpenSearch after {max_retries} attempts: {str(last_exception)}"
                     }
+    
+    def _prepare_headers(self, headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        """Prepare request headers."""
+        request_headers = {
+            'Content-Type': self.CONTENT_TYPE_JSON,
+            'Accept': self.CONTENT_TYPE_JSON
+        }
+        
+        # Update headers with any additional headers provided
+        if headers:
+            request_headers.update(headers)
+            
+        return request_headers
+    
+    def _execute_request(self, method: str, url: str, headers: Dict[str, str], data: Optional[Any] = None) -> requests.Response:
+        """Execute the HTTP request."""
+        if data is not None:
+            if isinstance(data, dict):
+                return requests.request(
+                    method=method,
+                    url=url,
+                    headers=headers,
+                    json=data,
+                    auth=self.auth,
+                    verify=self.verify_ssl
+                )
+            else:
+                return requests.request(
+                    method=method,
+                    url=url,
+                    headers=headers,
+                    data=data,
+                    auth=self.auth,
+                    verify=self.verify_ssl
+                )
+        else:
+            return requests.request(
+                method=method,
+                url=url,
+                headers=headers,
+                auth=self.auth,
+                verify=self.verify_ssl
+            )
+    
+    def _log_request_error(self, exception, retry_count, max_retries):
+        """Log request error details."""
+        logger.error(f"Error making request to OpenSearch (Attempt {retry_count}/{max_retries}): {str(exception)}")
+        
+        if hasattr(exception, 'response') and exception.response is not None:
+            if hasattr(exception.response, 'text'):
+                logger.error(f"Response text: {exception.response.text}")
+            if hasattr(exception.response, 'headers'):
+                logger.error(f"Response headers: {exception.response.headers}")
 
     def _setup_logging(self):
         """Set up logging configuration."""
@@ -252,20 +271,28 @@ class OpenSearchBaseManager:
 
     def _verify_index_exists(self, index_name: str) -> bool:
         """
-        Verify if an index exists in OpenSearch.
+        Verify that an index exists.
         
         Args:
-            index_name (str): Name of the index to verify
+            index_name (str): Name of the index
             
         Returns:
-            bool: True if index exists, False otherwise
+            bool: True if the index exists, False otherwise
         """
         try:
-            result = self._make_request('HEAD', f'/{index_name}')
-            if result['status'] == 'error':
+            response = self._make_request('HEAD', f'/{index_name}')
+            
+            if response['status'] == 'error':
+                if response['message'] == INDEX_NOT_EXIST_MESSAGE:
+                    logger.warning(f"Index {index_name} does not exist")
+                    return False
+                logger.error(f"Error verifying index exists: {response['message']}")
                 return False
-            return result['response'].status_code == 200
-        except requests.exceptions.RequestException:
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error verifying index exists: {str(e)}")
             return False
 
     def _get_index_count(self, index_name: str) -> int:
@@ -276,16 +303,23 @@ class OpenSearchBaseManager:
             index_name (str): Name of the index
             
         Returns:
-            int: Number of documents in the index
+            int: Document count
         """
         try:
-            result = self._make_request('GET', f'/{index_name}/_count')
-            if result['status'] == 'error':
-                raise ValueError(f"Failed to get index count: {result['message']}")
-            return result['response'].json()['count']
+            response = self._make_request('GET', f'/{index_name}/_count')
+            
+            if response['status'] == 'error':
+                if response['message'] == INDEX_NOT_EXIST_MESSAGE:
+                    logger.warning(f"Index {index_name} does not exist")
+                    return 0
+                logger.error(f"Error getting index count: {response['message']}")
+                return 0
+            
+            return response['response'].json().get('count', 0)
+            
         except Exception as e:
             logger.error(f"Error getting index count: {str(e)}")
-            raise
+            return 0
 
     def _check_index_aliases(self, index_name: str) -> Dict[str, Any]:
         """
@@ -344,8 +378,7 @@ class OpenSearchBaseManager:
                     }
                 }
             )
-            logger.info(f"Response: {result}")
-            
+                        
             if result['status'] == 'error':
                 return {
                     "status": "error",
@@ -406,18 +439,28 @@ class OpenSearchBaseManager:
             bulk_request = '\n'.join(bulk_request) + '\n'
             
             # Send bulk request
-            response = self._make_request(
+            result = self._make_request(
                 'POST',
                 '/_bulk',
                 data=bulk_request,
                 headers={'Content-Type': 'application/x-ndjson'}
             )
             
-            return response.json()
+            if result['status'] == 'error':
+                return result
+                
+            return {
+                'status': 'success',
+                'message': 'Bulk indexing completed successfully',
+                'response': result['response'].json()
+            }
             
         except Exception as e:
             logger.error(f"Error in bulk index: {str(e)}")
-            raise
+            return {
+                'status': 'error',
+                'message': f"Error in bulk index: {str(e)}"
+            }
     
     def create_index(self, index_name: str, settings: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -523,7 +566,7 @@ class OpenSearchBaseManager:
             elif response.status_code == 404:
                 return {
                     'status': 'error',
-                    'message': 'Index does not exist',
+                    'message': INDEX_NOT_EXIST_MESSAGE,
                     'response': response.json()
                 }
             else:
@@ -561,7 +604,7 @@ class OpenSearchBaseManager:
             elif response.status_code == 404:
                 return {
                     'status': 'error',
-                    'message': 'Index does not exist',
+                    'message': INDEX_NOT_EXIST_MESSAGE,
                     'response': response.json()
                 }
             else:
@@ -599,7 +642,7 @@ class OpenSearchBaseManager:
             elif response.status_code == 404:
                 return {
                     'status': 'error',
-                    'message': 'Index does not exist',
+                    'message': INDEX_NOT_EXIST_MESSAGE,
                     'response': response.json()
                 }
             else:
@@ -637,7 +680,7 @@ class OpenSearchBaseManager:
             elif response.status_code == 404:
                 return {
                     'status': 'error',
-                    'message': 'Index does not exist',
+                    'message': INDEX_NOT_EXIST_MESSAGE,
                     'response': response.json()
                 }
             else:
@@ -668,29 +711,21 @@ class OpenSearchBaseManager:
         try:
             # Initialize scroll
             query['size'] = batch_size
-            response = self._make_request(
+            result = self._make_request(
                 'POST',
                 f'/{index_name}/_search?scroll=1m',
                 data=query
             )
-            if response.status_code == 200:
-                return {
-                    'status': 'success',
-                    'message': 'Scroll initialized successfully',
-                    'response': response.json()
-                }
-            elif response.status_code == 404:
-                return {
-                    'status': 'error',
-                    'message': 'Index does not exist',
-                    'response': response.json()
-                }
-            else:
-                return {
-                    'status': 'error',
-                    'message': f"Failed to initialize scroll: {response.text}",
-                    'response': response.json()
-                }
+            
+            if result['status'] == 'error':
+                return result
+                
+            return {
+                'status': 'success',
+                'message': 'Scroll initialized successfully',
+                'response': result['response']
+            }
+            
         except Exception as e:
             logger.error(f"Error scrolling documents: {str(e)}")
             return {
@@ -732,4 +767,56 @@ class OpenSearchBaseManager:
             return {
                 'status': 'error',
                 'message': f"Error deleting index {index_name}: {str(e)}"
-            } 
+            }
+
+    def _get_index_mappings(self, index_name: str) -> Dict[str, Any]:
+        """
+        Get the mappings for an index.
+        
+        Args:
+            index_name (str): Name of the index
+            
+        Returns:
+            Dict[str, Any]: Index mappings
+        """
+        try:
+            response = self._make_request('GET', f'/{index_name}/_mapping')
+            
+            if response['status'] == 'error':
+                if response['message'] == INDEX_NOT_EXIST_MESSAGE:
+                    logger.warning(f"Index {index_name} does not exist")
+                    return {}
+                logger.error(f"Error getting index mappings: {response['message']}")
+                return {}
+            
+            return response['response'].json().get(index_name, {}).get('mappings', {})
+            
+        except Exception as e:
+            logger.error(f"Error getting index mappings: {str(e)}")
+            return {}
+    
+    def _get_index_aliases(self, index_name: str) -> List[str]:
+        """
+        Get the aliases for an index.
+        
+        Args:
+            index_name (str): Name of the index
+            
+        Returns:
+            List[str]: List of alias names
+        """
+        try:
+            response = self._make_request('GET', f'/{index_name}/_alias')
+            
+            if response['status'] == 'error':
+                if response['message'] == INDEX_NOT_EXIST_MESSAGE:
+                    logger.warning(f"Index {index_name} does not exist")
+                    return []
+                logger.error(f"Error getting index aliases: {response['message']}")
+                return []
+            
+            return list(response['response'].json().get(index_name, {}).get('aliases', {}).keys())
+            
+        except Exception as e:
+            logger.error(f"Error getting index aliases: {str(e)}")
+            return [] 
