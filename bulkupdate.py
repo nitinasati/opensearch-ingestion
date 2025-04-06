@@ -272,6 +272,14 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             # Local file
             return file_info.get("file_path", "")
 
+    def _determine_file_type(self, file_path):
+        """Determine file type based on extension."""
+        if file_path.lower().endswith('.json'):
+            return "json"
+        elif file_path.lower().endswith('.csv'):
+            return "csv"
+        return None
+        
     def _process_files(self, all_files: List[Dict[str, Any]], index_name: str, resume: bool = False) -> Tuple[int, int]:
         """
         Process a list of files and return total rows and files processed.
@@ -308,7 +316,7 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                 file_identifier = file_info
                 file_info_dict = {
                     "file_path": file_info,
-                    "type": "json" if file_info.lower().endswith('.json') else "csv"
+                    "type": self._determine_file_type(file_info)
                 }
             else:
                 file_identifier = self._get_file_identifier(file_info)
@@ -335,6 +343,96 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                 raise OpenSearchException(f"Error processing file {file_identifier}: {str(e)}")
                 
         return total_rows_from_file, total_files
+        
+    def _process_local_sources(self, local_folder, local_files):
+        """Process local folder and files, return list of files to process."""
+        all_files = []
+        
+        if local_folder:
+            folder_result = self.file_processor.process_local_folder(local_folder)
+            if folder_result["status"] == "error":
+                return folder_result
+            if "files" in folder_result:
+                all_files.extend(folder_result["files"])
+        
+        if local_files:
+            for file_path in local_files:
+                file_type = self._determine_file_type(file_path)
+                if file_type:
+                    all_files.append({"file_path": file_path, "type": file_type})
+                else:
+                    logger.warning(f"Ignoring file {file_path} due to unsupported file type. Only .csv and .json files are supported.")
+        
+        return all_files
+    
+    def _filter_s3_files(self, s3_files):
+        """Filter S3 files to only include CSV and JSON files."""
+        filtered_files = []
+        for file_info in s3_files:
+            file_path = file_info.get("file_path", f"{file_info.get('bucket', '')}/{file_info.get('key', '')}")
+            if file_info.get("type") in ["csv", "json"]:
+                filtered_files.append(file_info)
+            else:
+                logger.warning(f"Ignoring file {file_path} due to unsupported file type. Only .csv and .json files are supported.")
+        return filtered_files
+    
+    def _process_s3_source(self, bucket, prefix):
+        """Process S3 bucket and prefix, return list of files to process."""
+        if not bucket or not prefix:
+            return []
+            
+        s3_result = self.file_processor.process_s3_files(bucket, prefix)
+        if s3_result["status"] == "error":
+            return s3_result
+            
+        if "files" not in s3_result:
+            return []
+            
+        return self._filter_s3_files(s3_result["files"])
+    
+    def _format_verification_result(self, verification_result, total_rows, total_files, start_time):
+        """Format verification result into a response dictionary."""
+        if verification_result["status"] == "error":
+            return {
+                "status": "error",
+                "message": verification_result["message"],
+                "total_rows_processed": total_rows,
+                "total_files_processed": total_files,
+                "expected_documents": verification_result["expected_count"],
+                "actual_documents": verification_result["actual_count"],
+                "total_time_seconds": round(time.time() - start_time, 2)
+            }
+            
+        total_time = time.time() - start_time
+        return {
+            "status": "success",
+            "total_rows_processed": total_rows,
+            "total_files_processed": total_files,
+            "documents_indexed": verification_result["documents_indexed"],
+            "total_time_seconds": round(total_time, 2),
+            "average_time_per_file": round(total_time / total_files, 2) if total_files > 0 else 0,
+            "files_processed": total_rows > 0
+        }
+    
+    def _handle_verification_error(self, e, total_rows, total_files, start_time):
+        """Handle verification error and return error response."""
+        logger.error(f"Error verifying document count: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Error verifying document count: {str(e)}",
+            "total_rows_processed": total_rows,
+            "total_files_processed": total_files,
+            "total_time_seconds": round(time.time() - start_time, 2)
+        }
+    
+    def _verify_results(self, index_name, total_rows, total_files, start_time, resume, initial_count):
+        """Verify document count and return results."""
+        try:
+            verification_result = self._verify_document_count(index_name, self._processed_count, resume, initial_count)
+            return self._format_verification_result(verification_result, total_rows, total_files, start_time)
+            
+        except Exception as e:
+            return self._handle_verification_error(e, total_rows, total_files, start_time)
 
     def ingest_data(self, bucket: Optional[str] = None, prefix: Optional[str] = None, 
                     local_files: Optional[List[str]] = None, local_folder: Optional[str] = None,
@@ -357,55 +455,27 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             Dict[str, Any]: Result containing status and details
         """
         start_time = time.time()
-        all_files = []
         
         try:
             logger.info(f"Starting data ingestion to index: {index_name}")
             self._processed_count = 0
             
-            # Clear tracking file if fresh load is requested (default behavior)
+            # Clear tracking file if fresh load is requested
             if fresh_load:
                 logger.info("Performing fresh load - clearing processed files tracking")
                 self._clear_processed_files(index_name)
             
-            # Process local folder if provided
-            if local_folder:
-                folder_result = self.file_processor.process_local_folder(local_folder)
-                if folder_result["status"] == "error":
-                    return folder_result
-                if "files" in folder_result:
-                    all_files.extend(folder_result["files"])
+            # Process local sources
+            local_result = self._process_local_sources(local_folder, local_files)
+            if isinstance(local_result, dict) and local_result.get("status") == "error":
+                return local_result
+            all_files = local_result
             
-            # Process local files if provided
-            if local_files:
-                for file_path in local_files:
-                    # Determine file type
-                    file_type = None
-                    if file_path.lower().endswith('.json'):
-                        file_type = "json"
-                    elif file_path.lower().endswith('.csv'):
-                        file_type = "csv"
-                        
-                    if file_type:
-                        all_files.append({"file_path": file_path, "type": file_type})
-                    else:
-                        logger.warning(f"Ignoring file {file_path} due to unsupported file type. Only .csv and .json files are supported.")
-            
-            # Process S3 files if bucket and prefix are provided
-            if bucket and prefix:
-                s3_result = self.file_processor.process_s3_files(bucket, prefix)
-                if s3_result["status"] == "error":
-                    return s3_result
-                if "files" in s3_result:
-                    # Filter out unsupported file types
-                    filtered_files = []
-                    for file_info in s3_result["files"]:
-                        file_path = file_info.get("file_path", f"{file_info.get('bucket', '')}/{file_info.get('key', '')}")
-                        if file_info.get("type") in ["csv", "json"]:
-                            filtered_files.append(file_info)
-                        else:
-                            logger.warning(f"Ignoring file {file_path} due to unsupported file type. Only .csv and .json files are supported.")
-                    all_files.extend(filtered_files)
+            # Process S3 source
+            s3_files = self._process_s3_source(bucket, prefix)
+            if isinstance(s3_files, dict) and s3_files.get("status") == "error":
+                return s3_files
+            all_files.extend(s3_files)
             
             # Check if there are any files to process
             if not all_files:
@@ -427,6 +497,8 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                     return cleanup_result
             else:
                 logger.info("Resume mode enabled - skipping index cleanup to preserve existing data")
+                
+            # Get initial count if in resume mode
             initial_count = 0
             if resume:
                 try:
@@ -434,45 +506,12 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                     logger.info(f"Resume mode - Initial document count: {initial_count}")
                 except Exception as e:
                     logger.error(f"Error getting initial document count: {str(e)}")
-                    # Continue with verification, but we won't be able to verify the difference
+            
             # Process all files
             total_rows, total_files = self._process_files(all_files, index_name, resume)
             
-            # Verify document count
-            try:
-                verification_result = self._verify_document_count(index_name, self._processed_count, resume,initial_count)
-                
-                if verification_result["status"] == "error":
-                    return {
-                        "status": "error",
-                        "message": verification_result["message"],
-                        "total_rows_processed": total_rows,
-                        "total_files_processed": total_files,
-                        "expected_documents": verification_result["expected_count"],
-                        "actual_documents": verification_result["actual_count"],
-                        "total_time_seconds": round(time.time() - start_time, 2)
-                    }
-                    
-                total_time = time.time() - start_time
-                return {
-                    "status": "success",
-                    "total_rows_processed": total_rows,
-                    "total_files_processed": total_files,
-                    "documents_indexed": verification_result["documents_indexed"],
-                    "total_time_seconds": round(total_time, 2),
-                    "average_time_per_file": round(total_time / total_files, 2) if total_files > 0 else 0,
-                    "files_processed": total_rows > 0
-                }
-                
-            except Exception as e:
-                logger.error(f"Error verifying document count: {str(e)}")
-                return {
-                    "status": "error",
-                    "message": f"Error verifying document count: {str(e)}",
-                    "total_rows_processed": total_rows,
-                    "total_files_processed": total_files,
-                    "total_time_seconds": round(time.time() - start_time, 2)
-                }
+            # Verify results
+            return self._verify_results(index_name, total_rows, total_files, start_time, resume, initial_count)
             
         except Exception as e:
             error_msg = f"Error during data ingestion: {str(e)}"
@@ -481,6 +520,14 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
                 "status": "error",
                 "message": error_msg
             }
+
+def _arguments_printing(args):
+    """Print arguments and their values."""
+    logger.info(f"Index name: {args.index}")
+    logger.info(f"Total rows: {args.batch_size}")
+    logger.info(f"Total files: {args.max_workers}")
+    logger.info(f"Start time: {args.resume}")
+    logger.info(f"Resume: {args.fresh_load}")
 
 def main():
     """
@@ -510,16 +557,7 @@ def main():
         parser.error("Cannot specify both --resume and --fresh-load options")
     
     logger.info(f"Starting bulk ingestion script with index: {args.index}")
-    if args.bucket:
-        logger.info(f"S3 source: bucket={args.bucket}, prefix={args.prefix}")
-    if args.local_files:
-        logger.info(f"Local files: {', '.join(args.local_files)}")
-    if args.local_folder:
-        logger.info(f"Local folder: {args.local_folder}")
-    if args.resume:
-        logger.info("Resume mode enabled - will skip previously processed files")
-    else:
-        logger.info("Fresh load mode (default) - will process all files")
+    _arguments_printing(args)
     
     try:
         # Initialize ingestion service with batch size and max workers

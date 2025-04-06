@@ -14,8 +14,8 @@ import argparse
 import time
 from index_cleanup import OpenSearchIndexManager
 from datetime import datetime
-from opensearch_base_manager import OpenSearchBaseManager
-from typing import Dict, Any, Optional
+from opensearch_base_manager import OpenSearchBaseManager, OpenSearchException
+from typing import Dict, Any, Optional, List
 
 # Load environment variables
 load_dotenv()
@@ -54,56 +54,52 @@ class OpenSearchReindexManager(OpenSearchBaseManager):
             
         Returns:
             Dict[str, Any]: Result containing status and details
+            
+        Raises:
+            requests.exceptions.RequestException: If there's an error with the OpenSearch request
+            ValueError: If there's an error with index validation
+            OpenSearchException: If there's an error with OpenSearch operations
         """
         try:
-            # Clean up target index first
-            logger.info(f"Cleaning up target index {target_index}")
-            cleanup_result = self.index_manager.validate_and_cleanup_index(target_index)
-            if cleanup_result["status"] == "error":
-                logger.error(f"Failed to clean up target index: {cleanup_result['message']}")
-                return cleanup_result
-            logger.info("Successfully cleaned up target index")
-            
-            # Perform reindex operation
-            reindex_body = {
-                "source": {
-                    "index": source_index
-                },
-                "dest": {
-                    "index": target_index
-                }
-            }
-            
-            result = self._make_request(
-                'POST',
-                '/_reindex',
-                data=reindex_body
-            )
-            
-            if result['status'] == 'error':
-                error_msg = f"Failed to reindex: {result['message']}"
-                logger.error(error_msg)
+            # Verify source index exists
+            if not self._verify_index_exists(source_index):
                 return {
                     "status": "error",
-                    "message": error_msg
+                    "message": f"Source index {source_index} does not exist"
                 }
             
-            response = result['response']
-            if response.status_code == 200:
-                result_data = response.json()
-                total_docs = result_data.get('total', 0)
-                logger.info(f"Successfully reindexed {total_docs} documents")
+            # Get source index count
+            doc_count = self._get_index_count(source_index)
+            if doc_count == 0:
+                return {
+                    "status": "warning",
+                    "message": f"Source index {source_index} is empty"
+                }
+            
+            try:
+                # Scroll through source index
+                documents = self.scroll_index(source_index)
+                
+                # Extract _source from each document
+                sources = [doc['_source'] for doc in documents]
+                
+                # Bulk index into target index
+                bulk_result = self.bulk_index(target_index, sources)
+                if bulk_result['status'] == 'error':
+                    return {
+                        "status": "error",
+                        "message": f"Failed to reindex documents: {bulk_result['message']}"
+                    }
+                
                 return {
                     "status": "success",
-                    "message": f"Reindexed {total_docs} documents",
-                    "total_documents": total_docs
+                    "message": f"Successfully reindexed {doc_count} documents from {source_index} to {target_index}"
                 }
-            else:
-                error_msg = f"Failed to reindex. Status code: {response.status_code}"
-                logger.error(error_msg)
+                
+            except Exception as e:
                 return {
                     "status": "error",
-                    "message": error_msg
+                    "message": f"Failed to reindex documents: {str(e)}"
                 }
                 
         except Exception as e:
@@ -113,6 +109,42 @@ class OpenSearchReindexManager(OpenSearchBaseManager):
                 "status": "error",
                 "message": error_msg
             }
+
+    def scroll_index(self, index_name: str) -> List[Dict[str, Any]]:
+        """
+        Scroll through all documents in an index.
+        
+        Args:
+            index_name (str): Name of the index to scroll
+            
+        Returns:
+            List[Dict[str, Any]]: List of documents with their sources
+        """
+        try:
+            # Initialize scroll with a match_all query
+            query = {
+                "query": {
+                    "match_all": {}
+                },
+                "size": 1000  # Batch size
+            }
+            
+            # Start scrolling
+            scroll_result = self.scroll(index_name, query)
+            if scroll_result['status'] == 'error':
+                raise OpenSearchException(scroll_result['message'])
+                
+            # Extract documents from the response
+            response_data = scroll_result['response'].json()
+            hits = response_data.get('hits', {}).get('hits', [])
+            
+            # Return the hits directly
+            return hits
+            
+        except Exception as e:
+            error_msg = f"Error scrolling index {index_name}: {str(e)}"
+            logger.error(error_msg)
+            raise OpenSearchException(error_msg)
 
 def main():
     """
@@ -138,7 +170,6 @@ def main():
         # Print results
         if result["status"] == "success":
             logger.info(result["message"])
-            logger.info(f"Total documents processed: {result['total_documents']}")
         else:
             logger.error(f"Failed to reindex: {result['message']}")
             

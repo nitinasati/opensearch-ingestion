@@ -207,9 +207,6 @@ class FileProcessor:
             # Handle numeric values
             elif pd.api.types.is_numeric_dtype(type(value)):
                 value = float(value)
-            # Handle boolean values
-            elif isinstance(value, bool):
-                value = value
             # Handle string values
             else:
                 value = str(value).strip()

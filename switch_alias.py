@@ -28,6 +28,9 @@ from typing import Optional, Dict, Any
 # Load environment variables
 load_dotenv()
 
+# Constants
+ALIASES_ENDPOINT = '/_aliases'
+
 # Create log directory if it doesn't exist
 logger = logging.getLogger(__name__)
 
@@ -94,7 +97,7 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
         try:
             response = self._make_request(
                 'POST',
-                '/_aliases',
+                ALIASES_ENDPOINT,
                 data={
                     "actions": [
                         {
@@ -138,7 +141,7 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
         try:
             response = self._make_request(
                 'POST',
-                '/_aliases',
+                ALIASES_ENDPOINT,
                 data={
                     "actions": [
                         {
@@ -321,7 +324,7 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
             logger.info("Executing alias switch operation")
             result = self._make_request(
                 'POST',
-                '/_aliases',
+                ALIASES_ENDPOINT,
                 data=alias_body
             )
             

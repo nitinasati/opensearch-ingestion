@@ -1,0 +1,529 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="16" skipped="0" tests="39" time="5.349" timestamp="2025-04-05T22:24:12.728231-04:00" hostname="NitinHPLaptop"><testcase classname="tests.test_bulkupdate.TestOpenSearchBulkIngestion" name="test_arguments_printing" time="0.117" /><testcase classname="tests.test_bulkupdate.TestOpenSearchBulkIngestion" name="test_clear_processed_files" time="0.010"><failure message="json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)">self = &lt;test_bulkupdate.TestOpenSearchBulkIngestion testMethod=test_clear_processed_files&gt;
+
+    def test_clear_processed_files(self):
+        """Test clearing processed files."""
+        # Mock file reading and writing
+        with patch('builtins.open', new_callable=MagicMock) as mock_open:
+            mock_open.return_value.__enter__.return_value.read.return_value = json.dumps({
+                'test-index': ['file1.csv', 'file2.csv'],
+                'other-index': ['file3.csv']
+            })
+    
+            self.manager._clear_processed_files('test-index')
+    
+            # Check that the file was written with the updated data
+            mock_open.assert_called_with(TRACKING_FILE, 'w')
+            written_data = mock_open.return_value.__enter__.return_value.write.call_args[0][0]
+&gt;           data = json.loads(written_data)
+
+tests\test_bulkupdate.py:173: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.752.0_x64__qbz5n2kfra8p0\Lib\json\__init__.py:346: in loads
+    return _default_decoder.decode(s)
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.752.0_x64__qbz5n2kfra8p0\Lib\json\decoder.py:345: in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;json.decoder.JSONDecoder object at 0x000001FE533FCAD0&gt;, s = '}', idx = 0
+
+    def raw_decode(self, s, idx=0):
+        """Decode a JSON document from ``s`` (a ``str`` beginning with
+        a JSON document) and return a 2-tuple of the Python
+        representation and the index in ``s`` where the document ended.
+    
+        This can be used to decode a JSON document from a string that may
+        have extraneous data at the end.
+    
+        """
+        try:
+            obj, end = self.scan_once(s, idx)
+        except StopIteration as err:
+&gt;           raise JSONDecodeError("Expecting value", s, err.value) from None
+E           json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.752.0_x64__qbz5n2kfra8p0\Lib\json\decoder.py:363: JSONDecodeError</failure></testcase><testcase classname="tests.test_bulkupdate.TestOpenSearchBulkIngestion" name="test_determine_file_type" time="0.005"><failure message="AssertionError: None != 'unknown'">self = &lt;test_bulkupdate.TestOpenSearchBulkIngestion testMethod=test_determine_file_type&gt;
+
+    def test_determine_file_type(self):
+        """Test determining file type."""
+        # Test CSV file
+        file_type = self.manager._determine_file_type('test.csv')
+        self.assertEqual(file_type, 'csv')
+    
+        # Test JSON file
+        file_type = self.manager._determine_file_type('test.json')
+        self.assertEqual(file_type, 'json')
+    
+        # Test unknown file type
+        file_type = self.manager._determine_file_type('test.txt')
+&gt;       self.assertEqual(file_type, 'unknown')
+E       AssertionError: None != 'unknown'
+
+tests\test_bulkupdate.py:206: AssertionError</failure></testcase><testcase classname="tests.test_bulkupdate.TestOpenSearchBulkIngestion" name="test_filter_s3_files" time="0.005" /><testcase classname="tests.test_bulkupdate.TestOpenSearchBulkIngestion" name="test_format_verification_result" time="0.005"><failure message="TypeError: unsupported operand type(s) for -: 'float' and 'datetime.datetime'">self = &lt;test_bulkupdate.TestOpenSearchBulkIngestion testMethod=test_format_verification_result&gt;
+
+    def test_format_verification_result(self):
+        """Test formatting verification result."""
+        # Create test data
+        verification_result = {
+            'status': 'success',
+            'message': 'Document count verification successful',
+            'actual_count': 42,
+            'expected_count': 42
+        }
+        total_rows = 42
+        total_files = 2
+        start_time = datetime.now()
+    
+        # Format result
+&gt;       result = self.manager._format_verification_result(verification_result, total_rows, total_files, start_time)
+
+tests\test_bulkupdate.py:299: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;bulkupdate.OpenSearchBulkIngestion object at 0x000001FE5962A190&gt;
+verification_result = {'actual_count': 42, 'expected_count': 42, 'message': 'Document count verification successful', 'status': 'success'}
+total_rows = 42, total_files = 2, start_time = datetime.datetime(2025, 4, 5, 22, 24, 13, 879349)
+
+    def _format_verification_result(self, verification_result, total_rows, total_files, start_time):
+        """Format verification result into a response dictionary."""
+        if verification_result["status"] == "error":
+            return {
+                "status": "error",
+                "message": verification_result["message"],
+                "total_rows_processed": total_rows,
+                "total_files_processed": total_files,
+                "expected_documents": verification_result["expected_count"],
+                "actual_documents": verification_result["actual_count"],
+                "total_time_seconds": round(time.time() - start_time, 2)
+            }
+    
+&gt;       total_time = time.time() - start_time
+E       TypeError: unsupported operand type(s) for -: 'float' and 'datetime.datetime'
+
+bulkupdate.py:406: TypeError</failure></testcase><testcase classname="tests.test_bulkupdate.TestOpenSearchBulkIngestion" name="test_get_file_identifier" time="0.004" /><testcase classname="tests.test_bulkupdate.TestOpenSearchBulkIngestion" name="test_get_processed_files" time="0.005" /><testcase classname="tests.test_bulkupdate.TestOpenSearchBulkIngestion" name="test_handle_verification_error" time="0.005"><failure message="TypeError: unsupported operand type(s) for -: 'float' and 'datetime.datetime'">self = &lt;test_bulkupdate.TestOpenSearchBulkIngestion testMethod=test_handle_verification_error&gt;
+
+    def test_handle_verification_error(self):
+        """Test handling verification error."""
+        # Create test data
+        error = Exception('Test error')
+        total_rows = 42
+        total_files = 2
+        start_time = datetime.now()
+    
+        # Handle error
+&gt;       result = self.manager._handle_verification_error(error, total_rows, total_files, start_time)
+
+tests\test_bulkupdate.py:316: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;bulkupdate.OpenSearchBulkIngestion object at 0x000001FE596A38A0&gt;, e = Exception('Test error')
+total_rows = 42, total_files = 2, start_time = datetime.datetime(2025, 4, 5, 22, 24, 13, 914515)
+
+    def _handle_verification_error(self, e, total_rows, total_files, start_time):
+        """Handle verification error and return error response."""
+        logger.error(f"Error verifying document count: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Error verifying document count: {str(e)}",
+            "total_rows_processed": total_rows,
+            "total_files_processed": total_files,
+&gt;           "total_time_seconds": round(time.time() - start_time, 2)
+        }
+E       TypeError: unsupported operand type(s) for -: 'float' and 'datetime.datetime'
+
+bulkupdate.py:425: TypeError</failure></testcase><testcase classname="tests.test_bulkupdate.TestOpenSearchBulkIngestion" name="test_ingest_data_no_files" time="0.014"><failure message="AssertionError: 'warning' != 'error'&#10;- warning&#10;+ error">self = &lt;test_bulkupdate.TestOpenSearchBulkIngestion testMethod=test_ingest_data_no_files&gt;
+
+    def test_ingest_data_no_files(self):
+        """Test ingesting data with no files."""
+        # Test with no files
+        result = self.manager.ingest_data(index_name='test-index')
+    
+        # Check that the result contains the expected fields
+&gt;       self.assertEqual(result['status'], 'error')
+E       AssertionError: 'warning' != 'error'
+E       - warning
+E       + error
+
+tests\test_bulkupdate.py:373: AssertionError</failure></testcase><testcase classname="tests.test_bulkupdate.TestOpenSearchBulkIngestion" name="test_ingest_data_success" time="0.022" /><testcase classname="tests.test_bulkupdate.TestOpenSearchBulkIngestion" name="test_init" time="0.005" /><testcase classname="tests.test_bulkupdate.TestOpenSearchBulkIngestion" name="test_process_files" time="0.018" /><testcase classname="tests.test_bulkupdate.TestOpenSearchBulkIngestion" name="test_process_local_sources" time="0.004" /><testcase classname="tests.test_bulkupdate.TestOpenSearchBulkIngestion" name="test_process_s3_source" time="0.006" /><testcase classname="tests.test_bulkupdate.TestOpenSearchBulkIngestion" name="test_update_processed_files" time="0.006"><failure message="json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)">self = &lt;test_bulkupdate.TestOpenSearchBulkIngestion testMethod=test_update_processed_files&gt;
+
+    def test_update_processed_files(self):
+        """Test updating processed files."""
+        # Mock file reading and writing
+        with patch('builtins.open', new_callable=MagicMock) as mock_open:
+            mock_open.return_value.__enter__.return_value.read.return_value = json.dumps({
+                'test-index': ['file1.csv']
+            })
+    
+            self.manager._update_processed_files('test-index', 'file2.csv')
+    
+            # Check that the file was written with the updated list
+            mock_open.assert_called_with(TRACKING_FILE, 'w')
+            written_data = mock_open.return_value.__enter__.return_value.write.call_args[0][0]
+&gt;           data = json.loads(written_data)
+
+tests\test_bulkupdate.py:156: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.752.0_x64__qbz5n2kfra8p0\Lib\json\__init__.py:346: in loads
+    return _default_decoder.decode(s)
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.752.0_x64__qbz5n2kfra8p0\Lib\json\decoder.py:345: in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;json.decoder.JSONDecoder object at 0x000001FE533FCAD0&gt;, s = '}', idx = 0
+
+    def raw_decode(self, s, idx=0):
+        """Decode a JSON document from ``s`` (a ``str`` beginning with
+        a JSON document) and return a 2-tuple of the Python
+        representation and the index in ``s`` where the document ended.
+    
+        This can be used to decode a JSON document from a string that may
+        have extraneous data at the end.
+    
+        """
+        try:
+            obj, end = self.scan_once(s, idx)
+        except StopIteration as err:
+&gt;           raise JSONDecodeError("Expecting value", s, err.value) from None
+E           json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.752.0_x64__qbz5n2kfra8p0\Lib\json\decoder.py:363: JSONDecodeError</failure></testcase><testcase classname="tests.test_bulkupdate.TestOpenSearchBulkIngestion" name="test_verify_document_count_mismatch" time="0.006"><failure message="AssertionError: &quot;Document count mismatch: Expected 42, go[67 chars]76'&gt;&quot; != 'Document count mismatch'&#10;- Document count mismatch: Expected 42, got &lt;MagicMock name='mock._processed_count_from_bulk' id='2191937176976'&gt;&#10;+ Document count mismatch">self = &lt;test_bulkupdate.TestOpenSearchBulkIngestion testMethod=test_verify_document_count_mismatch&gt;
+
+    def test_verify_document_count_mismatch(self):
+        """Test document count verification with a mismatch."""
+        # Mock a successful count response with a different count
+        count_response = MagicMock()
+        count_response.status_code = 200
+        count_response.json.return_value = {'count': 40}
+        self.requests_mock.post.return_value = count_response
+    
+        result = self.manager._verify_document_count('test-index', 42)
+        self.assertEqual(result['status'], 'error')
+&gt;       self.assertEqual(result['message'], 'Document count mismatch')
+E       AssertionError: "Document count mismatch: Expected 42, go[67 chars]76'&gt;" != 'Document count mismatch'
+E       - Document count mismatch: Expected 42, got &lt;MagicMock name='mock._processed_count_from_bulk' id='2191937176976'&gt;
+E       + Document count mismatch
+
+tests\test_bulkupdate.py:128: AssertionError</failure></testcase><testcase classname="tests.test_bulkupdate.TestOpenSearchBulkIngestion" name="test_verify_document_count_success" time="0.006"><failure message="AssertionError: 'error' != 'success'&#10;- error&#10;+ success">self = &lt;test_bulkupdate.TestOpenSearchBulkIngestion testMethod=test_verify_document_count_success&gt;
+
+    def test_verify_document_count_success(self):
+        """Test successful document count verification."""
+        # Mock a successful count response
+        count_response = MagicMock()
+        count_response.status_code = 200
+        count_response.json.return_value = {'count': 42}
+        self.requests_mock.post.return_value = count_response
+    
+        result = self.manager._verify_document_count('test-index', 42)
+&gt;       self.assertEqual(result['status'], 'success')
+E       AssertionError: 'error' != 'success'
+E       - error
+E       + success
+
+tests\test_bulkupdate.py:113: AssertionError</failure></testcase><testcase classname="tests.test_bulkupdate.TestOpenSearchBulkIngestion" name="test_verify_results_error" time="0.006"><failure message="TypeError: unsupported operand type(s) for -: 'float' and 'datetime.datetime'">self = &lt;bulkupdate.OpenSearchBulkIngestion object at 0x000001FE5981DA90&gt;, index_name = 'test-index'
+total_rows = 42, total_files = 2, start_time = datetime.datetime(2025, 4, 5, 22, 24, 14, 149023)
+resume = False, initial_count = 0
+
+    def _verify_results(self, index_name, total_rows, total_files, start_time, resume, initial_count):
+        """Verify document count and return results."""
+        try:
+&gt;           verification_result = self._verify_document_count(index_name, self._processed_count, resume, initial_count)
+
+bulkupdate.py:431: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.752.0_x64__qbz5n2kfra8p0\Lib\unittest\mock.py:1167: in __call__
+    return self._mock_call(*args, **kwargs)
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.752.0_x64__qbz5n2kfra8p0\Lib\unittest\mock.py:1171: in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;MagicMock name='_verify_document_count' id='2191936312992'&gt;, args = ('test-index', 0, False, 0)
+kwargs = {}, effect = Exception('Test error')
+
+    def _execute_mock_call(self, /, *args, **kwargs):
+        # separate from _increment_mock_call so that awaited functions are
+        # executed separately from their call, also AsyncMock overrides this method
+    
+        effect = self.side_effect
+        if effect is not None:
+            if _is_exception(effect):
+&gt;               raise effect
+E               Exception: Test error
+
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.752.0_x64__qbz5n2kfra8p0\Lib\unittest\mock.py:1226: Exception
+
+During handling of the above exception, another exception occurred:
+
+self = &lt;test_bulkupdate.TestOpenSearchBulkIngestion testMethod=test_verify_results_error&gt;
+
+    def test_verify_results_error(self):
+        """Test verifying results with an error."""
+        # Mock the verification function to raise an exception
+        with patch.object(self.manager, '_verify_document_count', side_effect=Exception('Test error')):
+            # Create test data
+            total_rows = 42
+            total_files = 2
+            start_time = datetime.now()
+    
+            # Verify results
+&gt;           result = self.manager._verify_results('test-index', total_rows, total_files, start_time, False, 0)
+
+tests\test_bulkupdate.py:358: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+bulkupdate.py:435: in _verify_results
+    return self._handle_verification_error(e, total_rows, total_files, start_time)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;bulkupdate.OpenSearchBulkIngestion object at 0x000001FE5981DA90&gt;, e = Exception('Test error')
+total_rows = 42, total_files = 2, start_time = datetime.datetime(2025, 4, 5, 22, 24, 14, 149023)
+
+    def _handle_verification_error(self, e, total_rows, total_files, start_time):
+        """Handle verification error and return error response."""
+        logger.error(f"Error verifying document count: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Error verifying document count: {str(e)}",
+            "total_rows_processed": total_rows,
+            "total_files_processed": total_files,
+&gt;           "total_time_seconds": round(time.time() - start_time, 2)
+        }
+E       TypeError: unsupported operand type(s) for -: 'float' and 'datetime.datetime'
+
+bulkupdate.py:425: TypeError</failure></testcase><testcase classname="tests.test_bulkupdate.TestOpenSearchBulkIngestion" name="test_verify_results_success" time="0.006"><failure message="TypeError: unsupported operand type(s) for -: 'float' and 'datetime.datetime'">self = &lt;bulkupdate.OpenSearchBulkIngestion object at 0x000001FE599D6EB0&gt;, index_name = 'test-index'
+total_rows = 42, total_files = 2, start_time = datetime.datetime(2025, 4, 5, 22, 24, 14, 300675)
+resume = False, initial_count = 0
+
+    def _verify_results(self, index_name, total_rows, total_files, start_time, resume, initial_count):
+        """Verify document count and return results."""
+        try:
+            verification_result = self._verify_document_count(index_name, self._processed_count, resume, initial_count)
+&gt;           return self._format_verification_result(verification_result, total_rows, total_files, start_time)
+
+bulkupdate.py:432: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;bulkupdate.OpenSearchBulkIngestion object at 0x000001FE599D6EB0&gt;
+verification_result = {'actual_count': 42, 'expected_count': 42, 'message': 'Document count verification successful', 'status': 'success'}
+total_rows = 42, total_files = 2, start_time = datetime.datetime(2025, 4, 5, 22, 24, 14, 300675)
+
+    def _format_verification_result(self, verification_result, total_rows, total_files, start_time):
+        """Format verification result into a response dictionary."""
+        if verification_result["status"] == "error":
+            return {
+                "status": "error",
+                "message": verification_result["message"],
+                "total_rows_processed": total_rows,
+                "total_files_processed": total_files,
+                "expected_documents": verification_result["expected_count"],
+                "actual_documents": verification_result["actual_count"],
+                "total_time_seconds": round(time.time() - start_time, 2)
+            }
+    
+&gt;       total_time = time.time() - start_time
+E       TypeError: unsupported operand type(s) for -: 'float' and 'datetime.datetime'
+
+bulkupdate.py:406: TypeError
+
+During handling of the above exception, another exception occurred:
+
+self = &lt;test_bulkupdate.TestOpenSearchBulkIngestion testMethod=test_verify_results_success&gt;
+
+    def test_verify_results_success(self):
+        """Test verifying results successfully."""
+        # Mock the verification function
+        with patch.object(self.manager, '_verify_document_count', return_value={
+            'status': 'success',
+            'message': 'Document count verification successful',
+            'actual_count': 42,
+            'expected_count': 42
+        }):
+            # Create test data
+            total_rows = 42
+            total_files = 2
+            start_time = datetime.now()
+    
+            # Verify results
+&gt;           result = self.manager._verify_results('test-index', total_rows, total_files, start_time, False, 0)
+
+tests\test_bulkupdate.py:340: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+bulkupdate.py:435: in _verify_results
+    return self._handle_verification_error(e, total_rows, total_files, start_time)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;bulkupdate.OpenSearchBulkIngestion object at 0x000001FE599D6EB0&gt;
+e = TypeError("unsupported operand type(s) for -: 'float' and 'datetime.datetime'"), total_rows = 42
+total_files = 2, start_time = datetime.datetime(2025, 4, 5, 22, 24, 14, 300675)
+
+    def _handle_verification_error(self, e, total_rows, total_files, start_time):
+        """Handle verification error and return error response."""
+        logger.error(f"Error verifying document count: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Error verifying document count: {str(e)}",
+            "total_rows_processed": total_rows,
+            "total_files_processed": total_files,
+&gt;           "total_time_seconds": round(time.time() - start_time, 2)
+        }
+E       TypeError: unsupported operand type(s) for -: 'float' and 'datetime.datetime'
+
+bulkupdate.py:425: TypeError</failure></testcase><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_create_bulk_request" time="0.003" /><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_create_document" time="0.003" /><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_get_file_content_local" time="0.003" /><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_get_file_content_s3" time="0.002" /><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_get_files_by_type" time="0.002" /><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_init" time="0.002" /><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_process_batch_error" time="0.001"><failure message="AttributeError: &lt;file_processor.FileProcessor object at 0x000001FE59939BF0&gt; does not have the attribute '_make_request'">self = &lt;test_file_processor.TestFileProcessor testMethod=test_process_batch_error&gt;
+
+    def test_process_batch_error(self):
+        """Test processing a batch with an error."""
+        # Mock the _make_request function
+&gt;       with patch.object(self.processor, '_make_request', return_value={
+            'status': 'error',
+            'message': 'Test error'
+        }):
+
+tests\test_file_processor.py:202: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.752.0_x64__qbz5n2kfra8p0\Lib\unittest\mock.py:1495: in __enter__
+    original, local = self.get_original()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;unittest.mock._patch object at 0x000001FE599C0590&gt;
+
+    def get_original(self):
+        target = self.getter()
+        name = self.attribute
+    
+        original = DEFAULT
+        local = False
+    
+        try:
+            original = target.__dict__[name]
+        except (AttributeError, KeyError):
+            original = getattr(target, name, DEFAULT)
+        else:
+            local = True
+    
+        if name in _builtins and isinstance(target, ModuleType):
+            self.create = True
+    
+        if not self.create and original is DEFAULT:
+&gt;           raise AttributeError(
+                "%s does not have the attribute %r" % (target, name)
+            )
+E           AttributeError: &lt;file_processor.FileProcessor object at 0x000001FE59939BF0&gt; does not have the attribute '_make_request'
+
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.752.0_x64__qbz5n2kfra8p0\Lib\unittest\mock.py:1465: AttributeError</failure></testcase><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_process_batch_success" time="0.002"><failure message="AttributeError: &lt;file_processor.FileProcessor object at 0x000001FE59938D10&gt; does not have the attribute '_make_request'">self = &lt;test_file_processor.TestFileProcessor testMethod=test_process_batch_success&gt;
+
+    def test_process_batch_success(self):
+        """Test processing a batch successfully."""
+        # Mock the _make_request function
+&gt;       with patch.object(self.processor, '_make_request', return_value={
+            'status': 'success',
+            'response': MagicMock(
+                json=lambda: {'errors': False}
+            )
+        }):
+
+tests\test_file_processor.py:183: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.752.0_x64__qbz5n2kfra8p0\Lib\unittest\mock.py:1495: in __enter__
+    original, local = self.get_original()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;unittest.mock._patch object at 0x000001FE599D6890&gt;
+
+    def get_original(self):
+        target = self.getter()
+        name = self.attribute
+    
+        original = DEFAULT
+        local = False
+    
+        try:
+            original = target.__dict__[name]
+        except (AttributeError, KeyError):
+            original = getattr(target, name, DEFAULT)
+        else:
+            local = True
+    
+        if name in _builtins and isinstance(target, ModuleType):
+            self.create = True
+    
+        if not self.create and original is DEFAULT:
+&gt;           raise AttributeError(
+                "%s does not have the attribute %r" % (target, name)
+            )
+E           AttributeError: &lt;file_processor.FileProcessor object at 0x000001FE59938D10&gt; does not have the attribute '_make_request'
+
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.752.0_x64__qbz5n2kfra8p0\Lib\unittest\mock.py:1465: AttributeError</failure></testcase><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_process_batch_worker" time="0.001" /><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_process_csv_file" time="0.106" /><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_process_file_csv" time="0.005" /><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_process_file_error" time="0.001"><failure message="Exception: Test error">self = &lt;test_file_processor.TestFileProcessor testMethod=test_process_file_error&gt;
+
+    def test_process_file_error(self):
+        """Test processing a file with an error."""
+        # Mock the _get_file_content function to raise an exception
+        with patch.object(self.processor, '_get_file_content', side_effect=Exception('Test error')):
+            # Process the file
+&gt;           row_count = self.processor.process_file({
+                'file_path': 'test-file.csv',
+                'type': 'csv'
+            }, 'test-index', lambda *args, **kwargs: {'status': 'success'})
+
+tests\test_file_processor.py:345: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+file_processor.py:416: in process_file
+    content, file_path, file_type = self._get_file_content(file_info)
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.752.0_x64__qbz5n2kfra8p0\Lib\unittest\mock.py:1167: in __call__
+    return self._mock_call(*args, **kwargs)
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.752.0_x64__qbz5n2kfra8p0\Lib\unittest\mock.py:1171: in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = &lt;MagicMock name='_get_file_content' id='2191936319376'&gt;
+args = ({'file_path': 'test-file.csv', 'type': 'csv'},), kwargs = {}, effect = Exception('Test error')
+
+    def _execute_mock_call(self, /, *args, **kwargs):
+        # separate from _increment_mock_call so that awaited functions are
+        # executed separately from their call, also AsyncMock overrides this method
+    
+        effect = self.side_effect
+        if effect is not None:
+            if _is_exception(effect):
+&gt;               raise effect
+E               Exception: Test error
+
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.752.0_x64__qbz5n2kfra8p0\Lib\unittest\mock.py:1226: Exception</failure></testcase><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_process_file_json" time="0.003" /><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_process_json_file" time="0.102" /><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_process_local_folder_error" time="0.002"><failure message="AssertionError: 'Folder does not exist: C:\\Users\\itsme\\[56 chars]lder' != 'Error scanning folder test-folder: Test error'&#10;- Folder does not exist: C:\Users\itsme\git\opensearch-ingestion\opensearch-ingestion\test-folder&#10;+ Error scanning folder test-folder: Test error">self = &lt;test_file_processor.TestFileProcessor testMethod=test_process_local_folder_error&gt;
+
+    def test_process_local_folder_error(self):
+        """Test processing local folder with an error."""
+        # Mock the _get_files_by_type method to raise an exception
+        with patch.object(self.processor, '_get_files_by_type', side_effect=Exception('Test error')):
+            result = self.processor.process_local_folder('test-folder')
+    
+            self.assertEqual(result['status'], 'error')
+&gt;           self.assertEqual(result['message'], 'Error scanning folder test-folder: Test error')
+E           AssertionError: 'Folder does not exist: C:\\Users\\itsme\\[56 chars]lder' != 'Error scanning folder test-folder: Test error'
+E           - Folder does not exist: C:\Users\itsme\git\opensearch-ingestion\opensearch-ingestion\test-folder
+E           + Error scanning folder test-folder: Test error
+
+tests\test_file_processor.py:83: AssertionError</failure></testcase><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_process_local_folder_no_files" time="0.002"><failure message="AssertionError: 'error' != 'warning'&#10;- error&#10;+ warning">self = &lt;test_file_processor.TestFileProcessor testMethod=test_process_local_folder_no_files&gt;
+
+    def test_process_local_folder_no_files(self):
+        """Test processing local folder with no files."""
+        # Mock the _get_files_by_type method
+        with patch.object(self.processor, '_get_files_by_type', return_value=([], [])):
+            result = self.processor.process_local_folder('test-folder')
+    
+&gt;           self.assertEqual(result['status'], 'warning')
+E           AssertionError: 'error' != 'warning'
+E           - error
+E           + warning
+
+tests\test_file_processor.py:72: AssertionError</failure></testcase><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_process_local_folder_success" time="0.002"><failure message="AssertionError: 'error' != 'success'&#10;- error&#10;+ success">self = &lt;test_file_processor.TestFileProcessor testMethod=test_process_local_folder_success&gt;
+
+    def test_process_local_folder_success(self):
+        """Test processing local folder successfully."""
+        # Mock the _get_files_by_type method
+        with patch.object(self.processor, '_get_files_by_type', return_value=(
+            ['test-folder/file1.csv'], ['test-folder/file2.json']
+        )):
+            result = self.processor.process_local_folder('test-folder')
+    
+&gt;           self.assertEqual(result['status'], 'success')
+E           AssertionError: 'error' != 'success'
+E           - error
+E           + success
+
+tests\test_file_processor.py:61: AssertionError</failure></testcase><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_process_s3_files_error" time="0.001" /><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_process_s3_files_no_files" time="0.002" /><testcase classname="tests.test_file_processor.TestFileProcessor" name="test_process_s3_files_success" time="0.002" /><testcase time="0.000" /></testsuite></testsuites>
