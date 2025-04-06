@@ -457,5 +457,102 @@ class TestOpenSearchAliasManager(unittest.TestCase):
             }
         )
 
+    def test_switch_alias_non_200_status_code(self):
+        """Test alias switching when the response status code is not 200."""
+        # Mock _get_alias_info to return valid alias info
+        self.manager._get_alias_info = MagicMock(return_value={
+            'old-index': {
+                'aliases': {
+                    'test-alias': {}
+                }
+            }
+        })
+        
+        # Mock _verify_index_exists to return True for both indices
+        self.manager._verify_index_exists = MagicMock(return_value=True)
+        
+        # Mock _get_index_count to return 100 for both indices
+        self.manager._get_index_count = MagicMock(return_value=100)
+        
+        # Create a mock response with non-200 status code
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+        
+        # Mock _make_request to return success for alias info but non-200 status for switch operation
+        def mock_make_request(method, path, data=None, headers=None):
+            if path == '/_alias/test-alias':
+                return {
+                    'status': 'success',
+                    'response': MagicMock(
+                        status_code=200,
+                        json=lambda: {
+                            'old-index': {
+                                'aliases': {
+                                    'test-alias': {}
+                                }
+                            }
+                        }
+                    )
+                }
+            elif path == '/_aliases':
+                return {
+                    'status': 'success',
+                    'response': mock_response
+                }
+            return {
+                'status': 'success',
+                'response': MagicMock(status_code=200)
+            }
+        
+        self.manager._make_request = MagicMock(side_effect=mock_make_request)
+        
+        # Call switch_alias
+        result = self.manager.switch_alias('test-alias', 'old-index', 'new-index')
+        
+        # Verify result
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['message'], 'Failed to switch alias. Status code: 500')
+        self.assertEqual(result['response'], 'Internal Server Error')
+        
+        # Verify method calls
+        self.manager._get_alias_info.assert_called_once_with('test-alias')
+        self.manager._verify_index_exists.assert_any_call('old-index')
+        self.manager._verify_index_exists.assert_any_call('new-index')
+        self.manager._make_request.assert_called()
+
+    def test_switch_alias_exception_handling(self):
+        """Test exception handling in the switch_alias method."""
+        # Mock _get_alias_info to return valid alias info
+        self.manager._get_alias_info = MagicMock(return_value={
+            'old-index': {
+                'aliases': {
+                    'test-alias': {}
+                }
+            }
+        })
+        
+        # Mock _verify_index_exists to return True for both indices
+        self.manager._verify_index_exists = MagicMock(return_value=True)
+        
+        # Mock _get_index_count to return 100 for both indices
+        self.manager._get_index_count = MagicMock(return_value=100)
+        
+        # Mock _make_request to raise an exception
+        self.manager._make_request = MagicMock(side_effect=Exception("Test exception"))
+        
+        # Call switch_alias
+        result = self.manager.switch_alias('test-alias', 'old-index', 'new-index')
+        
+        # Verify result
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['message'], 'Error during alias switch: Test exception')
+        
+        # Verify method calls
+        self.manager._get_alias_info.assert_called_once_with('test-alias')
+        self.manager._verify_index_exists.assert_any_call('old-index')
+        self.manager._verify_index_exists.assert_any_call('new-index')
+        self.manager._make_request.assert_called()
+
 if __name__ == '__main__':
     unittest.main() 
