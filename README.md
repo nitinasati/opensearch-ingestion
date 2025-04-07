@@ -258,6 +258,15 @@ The system now supports resume and fresh load modes for bulk ingestion:
    - Provides more accurate document count verification
    - Ensures data consistency between source and target indices
 
+### Data Ingestion Requirements
+
+For detailed information about data ingestion requirements, including attribute matching and delta updates, please refer to the [Data Ingestion Requirements](data_ingestion_requirements.md) document. This document covers:
+
+- Attribute matching between source data and index mappings
+- Delta updates for existing records
+- Data type compatibility
+- Best practices for data ingestion
+
 ## Performance Configuration Guide
 
 ### Batch Size Selection

@@ -554,5 +554,74 @@ class TestOpenSearchAliasManager(unittest.TestCase):
         self.manager._verify_index_exists.assert_any_call('new-index')
         self.manager._make_request.assert_called()
 
+    def test_switch_alias_response_handling(self):
+        """Test handling of different response scenarios in switch_alias method."""
+        # Mock _get_alias_info to return valid alias info
+        self.manager._get_alias_info = MagicMock(return_value={
+            'old-index': {
+                'aliases': {
+                    'test-alias': {}
+                }
+            }
+        })
+        
+        # Mock _verify_index_exists to return True for both indices
+        self.manager._verify_index_exists = MagicMock(return_value=True)
+        
+        # Mock _get_index_count to return 100 for both indices
+        self.manager._get_index_count = MagicMock(return_value=100)
+        
+        # Test case 1: Successful response (status code 200)
+        mock_success_response = {
+            'status': 'success',
+            'response': MagicMock(status_code=200)
+        }
+        
+        # Test case 2: Error response (status code 500)
+        mock_error_response = {
+            'status': 'success',
+            'response': MagicMock(status_code=500)
+        }
+        
+        # Test case 3: Exception during request
+        mock_exception_response = MagicMock(side_effect=Exception("Connection error"))
+        
+        # Test successful case
+        self.manager._make_request = MagicMock(return_value=mock_success_response)
+        result = self.manager.switch_alias('test-alias', 'old-index', 'new-index')
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['message'], 'Successfully switched alias test-alias from old-index to new-index')
+        
+        # Test error status code case
+        self.manager._make_request = MagicMock(return_value=mock_error_response)
+        result = self.manager.switch_alias('test-alias', 'old-index', 'new-index')
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['message'], 'Failed to switch alias. Status code: 500')
+        
+        # Test exception case
+        self.manager._make_request = mock_exception_response
+        result = self.manager.switch_alias('test-alias', 'old-index', 'new-index')
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['message'], 'Error during alias switch: Connection error')
+        
+        # Verify that _make_request was called with correct parameters
+        expected_data = {
+            "actions": [
+                {
+                    "remove": {
+                        "index": "old-index",
+                        "alias": "test-alias"
+                    }
+                },
+                {
+                    "add": {
+                        "index": "new-index",
+                        "alias": "test-alias"
+                    }
+                }
+            ]
+        }
+        self.manager._make_request.assert_any_call('POST', ALIASES_ENDPOINT, data=expected_data)
+
 if __name__ == '__main__':
     unittest.main() 

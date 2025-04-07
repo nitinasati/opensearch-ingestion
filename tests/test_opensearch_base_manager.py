@@ -284,6 +284,92 @@ class TestOpenSearchBaseManager(unittest.TestCase):
             'GET',
             '/test-index/_settings'
         )
+    
+    def test_get_index_settings_success(self):
+        """Test successful retrieval of index settings."""
+        # Mock the _make_request method
+        self.manager._make_request = MagicMock(return_value={
+            'status': 'success',
+            'response': MagicMock(
+                status_code=200,
+                json=lambda: {
+                    'test-index': {
+                        'settings': {
+                            'index': {
+                                'number_of_shards': '1',
+                                'number_of_replicas': '1'
+                            }
+                        }
+                    }
+                }
+            )
+        })
+        
+        # Test data
+        index_name = 'test-index'
+        
+        # Get index settings
+        result = self.manager.get_index_settings(index_name)
+        
+        # Verify the result
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['message'], 'Index settings retrieved successfully')
+        self.assertIn('response', result)
+        
+        # Verify that _make_request was called with the correct parameters
+        self.manager._make_request.assert_called_with(
+            'GET',
+            '/test-index/_settings'
+        )
+    
+    def test_get_index_settings_not_found(self):
+        """Test getting settings for a non-existent index."""
+        # Mock the _make_request method
+        self.manager._make_request = MagicMock(return_value={
+            'status': 'success',
+            'response': MagicMock(
+                status_code=404,
+                json=lambda: {'error': {'type': 'index_not_found_exception'}}
+            )
+        })
+        
+        # Test data
+        index_name = 'non-existent-index'
+        
+        # Get index settings
+        result = self.manager.get_index_settings(index_name)
+        
+        # Verify the result
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['message'], 'Index does not exist')
+        self.assertIn('response', result)
+        
+        # Verify that _make_request was called with the correct parameters
+        self.manager._make_request.assert_called_with(
+            'GET',
+            '/non-existent-index/_settings'
+        )
+    
+    def test_get_index_settings_exception(self):
+        """Test exception handling when getting index settings."""
+        # Mock the _make_request method to raise an exception
+        self.manager._make_request = MagicMock(side_effect=Exception("Test exception"))
+        
+        # Test data
+        index_name = 'test-index'
+        
+        # Get index settings
+        result = self.manager.get_index_settings(index_name)
+        
+        # Verify the result
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['message'], 'Error getting index settings: Test exception')
+        
+        # Verify that _make_request was called with the correct parameters
+        self.manager._make_request.assert_called_with(
+            'GET',
+            '/test-index/_settings'
+        )
 
     def test_bulk_index_success(self):
         """Test successful bulk indexing of documents."""
@@ -627,6 +713,30 @@ class TestOpenSearchBaseManager(unittest.TestCase):
         self.assertEqual(mock_sleep.call_count, 2)
         mock_sleep.assert_any_call(1)  # First retry: 2^0 = 1 second
         mock_sleep.assert_any_call(2)  # Second retry: 2^1 = 2 seconds
+
+    def test_delete_index_request_exception(self):
+        """Test deleting an index when a request exception occurs."""
+        # Mock the _verify_index_exists method to return True
+        self.manager._verify_index_exists = MagicMock(return_value=True)
+        
+        # Mock the _make_request method to raise a RequestException
+        self.manager._make_request = MagicMock(side_effect=requests.exceptions.RequestException("Connection error"))
+        
+        # Test data
+        index_name = 'test-index'
+        
+        # Perform deletion
+        result = self.manager._delete_index(index_name)
+        
+        # Verify the result
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['message'], 'Error deleting index test-index: Connection error')
+        
+        # Verify that _make_request was called with the correct parameters
+        self.manager._make_request.assert_called_with(
+            'DELETE',
+            '/test-index'
+        )
 
 if __name__ == '__main__':
     unittest.main() 
