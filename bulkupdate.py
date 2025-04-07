@@ -475,6 +475,15 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             logger.info(f"Starting data ingestion to index: {index_name}")
             self._processed_count = 0
             
+            # checking if index exists
+            logger.info(f"Checking if index {index_name} exists")
+            index_exists = self.index_manager._verify_index_exists(index_name)
+            if not index_exists:
+                logger.error(f"Index {index_name} does not exist")
+                return {
+                    "status": "error",
+                    "message": f"Index {index_name} does not exist"
+                }
             # Clear tracking file if fresh load is requested
             if fresh_load:
                 logger.info("Performing fresh load - clearing processed files tracking")
@@ -513,15 +522,8 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             else:
                 logger.info("Resume mode enabled - skipping index cleanup to preserve existing data")
                 
-            # Get initial count if in resume mode
+            # Get initial count 
             initial_count = 0
-            if resume:
-                try:
-                    initial_count = self._get_index_count(index_name)
-                    logger.info(f"Resume mode - Initial document count: {initial_count}")
-                except Exception as e:
-                    logger.error(f"Error getting initial document count: {str(e)}")
-            
             # Process all files
             total_rows, total_files = self._process_files(all_files, index_name, resume)
             

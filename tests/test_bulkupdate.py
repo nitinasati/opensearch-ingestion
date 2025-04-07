@@ -1,8 +1,9 @@
 """
-Unit tests for the OpenSearchBulkIngestion class.
+Unit tests for the OpenSearchBulkIngestion class and main function.
 
-This module contains tests for the bulk ingestion functionality, including
-file processing, document verification, and ingestion operations.
+This module contains tests for bulk ingestion operations, including
+the main function that handles command line arguments and orchestrates
+the data ingestion process.
 """
 
 import unittest
@@ -12,7 +13,7 @@ import os
 import pandas as pd
 from io import StringIO
 from datetime import datetime
-from bulkupdate import OpenSearchBulkIngestion, NO_FILES_MESSAGE, TRACKING_FILE
+from bulkupdate import OpenSearchBulkIngestion, NO_FILES_MESSAGE, TRACKING_FILE, main
 
 class TestOpenSearchBulkIngestion(unittest.TestCase):
     """Test cases for the OpenSearchBulkIngestion class."""
@@ -82,7 +83,7 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
         self.file_processor_patcher.start()
         
         # Initialize the manager
-        self.manager = OpenSearchBulkIngestion()
+        self.manager = OpenSearchBulkIngestion(batch_size=1000, max_workers=2)
     
     def tearDown(self):
         """Clean up after tests."""
@@ -98,8 +99,9 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
     
     def test_init(self):
         """Test initialization of the OpenSearchBulkIngestion class."""
-        self.assertEqual(self.manager.batch_size, 10000)
-        self.assertEqual(self.manager.max_workers, 4)
+        self.assertIsNotNone(self.manager)
+        self.assertEqual(self.manager.batch_size, 1000)
+        self.assertEqual(self.manager.max_workers, 2)
     
     def test_verify_document_count_success(self):
         """Test successful document count verification."""
@@ -404,13 +406,28 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
             self.assertIn('total_time_seconds', result)
     
     def test_ingest_data_no_files(self):
-        """Test ingesting data with no files."""
-        # Test with no files
-        result = self.manager.ingest_data(index_name='test-index')
+        """Test ingestion when no files are found."""
+        # Mock the necessary methods
+        self.manager._process_s3_source = MagicMock(return_value=[])
+        self.manager._process_local_sources = MagicMock(return_value=[])
+        self.manager._process_files = MagicMock()  # Ensure this is a MagicMock object
         
-        # Check that the result contains the expected fields
+        # Call ingest_data method
+        result = self.manager.ingest_data(
+            bucket='empty-bucket',
+            prefix='empty-prefix/',
+            index_name='test-index'
+        )
+        
+        # Verify the result
         self.assertEqual(result['status'], 'warning')
-        self.assertEqual(result['message'], NO_FILES_MESSAGE)
+        self.assertEqual(result['message'], 'No files to process')
+        self.assertEqual(result['total_rows_processed'], 0)
+        self.assertEqual(result['total_files_processed'], 0)
+        
+        # Verify method calls
+        self.manager.index_manager.validate_and_cleanup_index.assert_not_called()
+        self.manager._process_files.assert_not_called()
     
     def test_ingest_data_success(self):
         """Test ingesting data successfully."""
@@ -437,25 +454,370 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
                     self.assertEqual(result['total_files'], 2)
                     self.assertIn('processing_time', result)
     
-    def test_arguments_printing(self):
-        """Test printing arguments."""
-        # Create test arguments
-        args = MagicMock()
-        args.bucket = 'test-bucket'
-        args.prefix = 'test-prefix'
-        args.local_files = ['file1.csv', 'file2.json']
-        args.local_folder = 'test-folder'
-        args.index = 'test-index'
-        args.resume = True
-        args.fresh_load = False
+    def test_ingest_data_s3_success(self):
+        """Test successful ingestion from S3."""
+        # Mock the necessary methods
+        self.manager._process_s3_source = MagicMock(return_value=[
+            {"bucket": "test-bucket", "key": "test-file.csv", "type": "csv"}
+        ])
+        self.manager._process_files = MagicMock(return_value=(200, 2))
+        self.manager._verify_results = MagicMock(return_value={
+            'status': 'success',
+            'message': 'Successfully ingested data',
+            'total_rows_processed': 200,
+            'total_files_processed': 2,
+            'actual_documents': 200,
+            'expected_documents': 200,
+            'total_time_seconds': 1.5
+        })
         
-        # Import the function
-        from bulkupdate import _arguments_printing
+        # Call ingest_data method
+        result = self.manager.ingest_data(
+            bucket='test-bucket',
+            prefix='test-prefix/',
+            index_name='test-index'
+        )
         
-        # Print arguments
-        _arguments_printing(args)
+        # Verify the result
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['total_rows_processed'], 200)
+        self.assertEqual(result['total_files_processed'], 2)
         
-        # No assertions needed, just checking that it doesn't raise an exception
+        # Verify method calls
+        self.manager.index_manager.validate_and_cleanup_index.assert_called_once_with('test-index')
+        self.manager._process_files.assert_called_once()
+        self.manager._verify_results.assert_called_once()
+    
+    def test_ingest_data_local_files_success(self):
+        """Test successful ingestion from local files."""
+        # Mock the necessary methods
+        self.manager._process_files = MagicMock(return_value=(150, 2))
+        self.manager._verify_results = MagicMock(return_value={
+            'status': 'success',
+            'message': 'Successfully ingested data',
+            'total_rows_processed': 150,
+            'total_files_processed': 2,
+            'actual_documents': 150,
+            'expected_documents': 150,
+            'total_time_seconds': 1.2
+        })
+        
+        # Call ingest_data method
+        result = self.manager.ingest_data(
+            local_files=['file1.csv', 'file2.json'],
+            index_name='test-index'
+        )
+        
+        # Verify the result
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['total_rows_processed'], 150)
+        self.assertEqual(result['total_files_processed'], 2)
+        
+        # Verify method calls
+        self.manager.index_manager.validate_and_cleanup_index.assert_called_once_with('test-index')
+        self.manager._process_files.assert_called_once()
+        self.manager._verify_results.assert_called_once()
+    
+    def test_ingest_data_cleanup_error(self):
+        """Test ingestion when index cleanup fails."""
+        # Mock the necessary methods
+        self.manager._process_s3_source = MagicMock(return_value=[
+            {"bucket": "test-bucket", "key": "test-file.csv", "type": "csv"}
+        ])
+        self.manager.index_manager.validate_and_cleanup_index = MagicMock(return_value={
+            'status': 'error',
+            'message': 'Failed to clean up index'
+        })
+        self.manager._process_files = MagicMock()  # Ensure this is a MagicMock object
+        
+        # Call ingest_data method
+        result = self.manager.ingest_data(
+            bucket='test-bucket',
+            prefix='test-prefix/',
+            index_name='test-index'
+        )
+        
+        # Verify the result
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['message'], 'Failed to clean up index')
+        
+        # Verify method calls
+        self.manager.index_manager.validate_and_cleanup_index.assert_called_once_with('test-index')
+        self.manager._process_files.assert_not_called()
+    
+    def test_ingest_data_verification_error(self):
+        """Test ingestion when verification fails."""
+        # Mock the necessary methods
+        self.manager._process_s3_source = MagicMock(return_value=[
+            {"bucket": "test-bucket", "key": "test-file.csv", "type": "csv"}
+        ])
+        self.manager._process_files = MagicMock(return_value=(200, 2))
+        self.manager._verify_results = MagicMock(return_value={
+            'status': 'error',
+            'message': 'Document count verification failed',
+            'expected_documents': 200,
+            'actual_documents': 150
+        })
+        
+        # Call ingest_data method
+        result = self.manager.ingest_data(
+            bucket='test-bucket',
+            prefix='test-prefix/',
+            index_name='test-index'
+        )
+        
+        # Verify the result
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['message'], 'Document count verification failed')
+        self.assertEqual(result['expected_documents'], 200)
+        self.assertEqual(result['actual_documents'], 150)
+        
+        # Verify method calls
+        self.manager.index_manager.validate_and_cleanup_index.assert_called_once_with('test-index')
+        self.manager._process_files.assert_called_once()
+        self.manager._verify_results.assert_called_once()
+
+class TestBulkUpdateMain(unittest.TestCase):
+    """Test cases for the main function in bulkupdate.py."""
+    
+    @patch('argparse.ArgumentParser.parse_args')
+    @patch('bulkupdate.OpenSearchBulkIngestion')
+    def test_main_s3_success(self, mock_ingestion_class, mock_parse_args):
+        """Test the main function with successful S3 ingestion."""
+        # Set up mock arguments
+        mock_args = MagicMock()
+        mock_args.bucket = 'test-bucket'
+        mock_args.prefix = 'test-prefix/'
+        mock_args.local_files = None
+        mock_args.local_folder = None
+        mock_args.index = 'test-index'
+        mock_args.batch_size = 1000
+        mock_args.max_workers = 2
+        mock_args.resume = False
+        mock_args.fresh_load = True
+        mock_parse_args.return_value = mock_args
+        
+        # Set up mock ingestion service
+        mock_ingestion_service = MagicMock()
+        mock_ingestion_class.return_value = mock_ingestion_service
+        
+        # Set up mock result
+        mock_result = {
+            'status': 'success',
+            'message': 'Successfully ingested data',
+            'total_rows_processed': 200,
+            'total_files_processed': 2,
+            'actual_documents': 200,
+            'expected_documents': 200,
+            'total_time_seconds': 1.5
+        }
+        mock_ingestion_service.ingest_data.return_value = mock_result
+        
+        # Call main function
+        result = main()
+        
+        # Verify result
+        self.assertEqual(result, 0)
+        
+        # Verify ingestion service was initialized
+        mock_ingestion_class.assert_called_once_with(
+            batch_size=1000,
+            max_workers=2
+        )
+        
+        # Verify ingest_data was called with correct arguments
+        mock_ingestion_service.ingest_data.assert_called_once_with(
+            bucket='test-bucket',
+            prefix='test-prefix/',
+            local_files=None,
+            local_folder=None,
+            index_name='test-index',
+            resume=False,
+            fresh_load=True
+        )
+    
+    @patch('argparse.ArgumentParser.parse_args')
+    @patch('bulkupdate.OpenSearchBulkIngestion')
+    def test_main_local_files_success(self, mock_ingestion_class, mock_parse_args):
+        """Test the main function with successful local files ingestion."""
+        # Set up mock arguments
+        mock_args = MagicMock()
+        mock_args.bucket = None
+        mock_args.prefix = None
+        mock_args.local_files = ['file1.csv', 'file2.json']
+        mock_args.local_folder = None
+        mock_args.index = 'test-index'
+        mock_args.batch_size = 1000
+        mock_args.max_workers = 2
+        mock_args.resume = False
+        mock_args.fresh_load = True
+        mock_parse_args.return_value = mock_args
+        
+        # Set up mock ingestion service
+        mock_ingestion_service = MagicMock()
+        mock_ingestion_class.return_value = mock_ingestion_service
+        
+        # Set up mock result
+        mock_result = {
+            'status': 'success',
+            'message': 'Successfully ingested data',
+            'total_rows_processed': 150,
+            'total_files_processed': 2,
+            'actual_documents': 150,
+            'expected_documents': 150,
+            'total_time_seconds': 1.2
+        }
+        mock_ingestion_service.ingest_data.return_value = mock_result
+        
+        # Call main function
+        result = main()
+        
+        # Verify result
+        self.assertEqual(result, 0)
+        
+        # Verify ingestion service was initialized
+        mock_ingestion_class.assert_called_once_with(
+            batch_size=1000,
+            max_workers=2
+        )
+        
+        # Verify ingest_data was called with correct arguments
+        mock_ingestion_service.ingest_data.assert_called_once_with(
+            bucket=None,
+            prefix=None,
+            local_files=['file1.csv', 'file2.json'],
+            local_folder=None,
+            index_name='test-index',
+            resume=False,
+            fresh_load=True
+        )
+    
+    @patch('argparse.ArgumentParser.parse_args')
+    @patch('bulkupdate.OpenSearchBulkIngestion')
+    def test_main_error(self, mock_ingestion_class, mock_parse_args):
+        """Test the main function with error in ingestion."""
+        # Set up mock arguments
+        mock_args = MagicMock()
+        mock_args.bucket = 'test-bucket'
+        mock_args.prefix = 'test-prefix/'
+        mock_args.local_files = None
+        mock_args.local_folder = None
+        mock_args.index = 'test-index'
+        mock_args.batch_size = 1000
+        mock_args.max_workers = 2
+        mock_args.resume = False
+        mock_args.fresh_load = True
+        mock_parse_args.return_value = mock_args
+        
+        # Set up mock ingestion service
+        mock_ingestion_service = MagicMock()
+        mock_ingestion_class.return_value = mock_ingestion_service
+        
+        # Set up mock result with error
+        mock_result = {
+            'status': 'error',
+            'message': 'Failed to ingest data',
+            'expected_documents': 200,
+            'actual_documents': 150
+        }
+        mock_ingestion_service.ingest_data.return_value = mock_result
+        
+        # Call main function
+        result = main()
+        
+        # Verify result
+        self.assertEqual(result, 0)  # Main returns 0 even for error status
+        
+        # Verify ingestion service was initialized
+        mock_ingestion_class.assert_called_once_with(
+            batch_size=1000,
+            max_workers=2
+        )
+        
+        # Verify ingest_data was called with correct arguments
+        mock_ingestion_service.ingest_data.assert_called_once_with(
+            bucket='test-bucket',
+            prefix='test-prefix/',
+            local_files=None,
+            local_folder=None,
+            index_name='test-index',
+            resume=False,
+            fresh_load=True
+        )
+    
+    @patch('argparse.ArgumentParser.parse_args')
+    def test_main_exception(self, mock_parse_args):
+        """Test the main function with exception."""
+        # Set up mock arguments
+        mock_args = MagicMock()
+        mock_args.bucket = 'test-bucket'
+        mock_args.prefix = 'test-prefix/'
+        mock_args.local_files = None
+        mock_args.local_folder = None
+        mock_args.index = 'test-index'
+        mock_args.batch_size = 1000
+        mock_args.max_workers = 2
+        mock_args.resume = False
+        mock_args.fresh_load = True
+        mock_parse_args.return_value = mock_args
+        
+        # Set up mock to raise exception
+        with patch('bulkupdate.OpenSearchBulkIngestion', side_effect=ValueError("Configuration error")):
+            # Call main function
+            result = main()
+            
+            # Verify result
+            self.assertEqual(result, 1)  # Main returns 1 for exceptions
+    
+    @patch('argparse.ArgumentParser.parse_args')
+    def test_main_no_data_source(self, mock_parse_args):
+        """Test the main function with no data source provided."""
+        # Set up mock arguments with no data source
+        mock_args = MagicMock()
+        mock_args.bucket = None
+        mock_args.prefix = None
+        mock_args.local_files = None
+        mock_args.local_folder = None
+        mock_args.index = 'test-index'
+        mock_args.batch_size = 1000
+        mock_args.max_workers = 2
+        mock_args.resume = False
+        mock_args.fresh_load = True
+        mock_parse_args.return_value = mock_args
+        
+        # Mock the parser.error method to avoid actual exit
+        with patch('argparse.ArgumentParser.error', side_effect=SystemExit(2)):
+            # Call main function and expect SystemExit
+            with self.assertRaises(SystemExit) as cm:
+                main()
+            
+            # Verify exit code
+            self.assertEqual(cm.exception.code, 2)
+    
+    @patch('argparse.ArgumentParser.parse_args')
+    def test_main_resume_and_fresh_load(self, mock_parse_args):
+        """Test the main function with both resume and fresh-load options."""
+        # Set up mock arguments with both resume and fresh-load
+        mock_args = MagicMock()
+        mock_args.bucket = 'test-bucket'
+        mock_args.prefix = 'test-prefix/'
+        mock_args.local_files = None
+        mock_args.local_folder = None
+        mock_args.index = 'test-index'
+        mock_args.batch_size = 1000
+        mock_args.max_workers = 2
+        mock_args.resume = True
+        mock_args.fresh_load = True
+        mock_parse_args.return_value = mock_args
+        
+        # Mock the parser.error method to avoid actual exit
+        with patch('argparse.ArgumentParser.error', side_effect=SystemExit(2)):
+            # Call main function and expect SystemExit
+            with self.assertRaises(SystemExit) as cm:
+                main()
+            
+            # Verify exit code
+            self.assertEqual(cm.exception.code, 2)
 
 if __name__ == '__main__':
     unittest.main() 

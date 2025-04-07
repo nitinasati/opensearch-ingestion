@@ -184,12 +184,14 @@ class TestFileProcessor(unittest.TestCase):
         # Set the _make_request attribute on the processor
         self.processor._make_request = MagicMock()
         
+        # Create a mock response with proper json method
+        mock_response = MagicMock()
+        mock_response.json.return_value = {'errors': False, 'items': [{'index': {'status': 200}}, {'index': {'status': 200}}]}
+        
         # Mock the _make_request function
         with patch.object(self.processor, '_make_request', return_value={
             'status': 'success',
-            'response': MagicMock(
-                json=lambda: {'errors': False}
-            )
+            'response': mock_response
         }):
             # Create test batch
             batch = [

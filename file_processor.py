@@ -264,8 +264,7 @@ class FileProcessor:
                 logger.error(f"Bulk request had errors for file {file_key}")
                 return False
             
-            # Extract processed record count from the response
-            processed_count = 0
+
             if 'items' in response:
                 processed_count = len(response['items'])
                 logger.info(f"Processed {processed_count} records from bulk request for file {file_key}")
@@ -295,6 +294,7 @@ class FileProcessor:
                     break
                 
                 success = self._process_batch(batch, index_name, file_key)
+                logger.info(f"Batch of length {len(batch)} processed successfully for file {file_key}")
                 if not success:
                     logger.warning(f"Failed to process batch for file {file_key}")
                 self._batch_queue.task_done()
@@ -325,6 +325,7 @@ class FileProcessor:
                 batch.append(document)
                 
                 if len(batch) >= self.batch_size:
+                    logger.info(f"Putting batch of {len(batch)} documents into queue")
                     self._batch_queue.put(batch.copy())
                     batch = []
                     time.sleep(0.1)
@@ -333,6 +334,7 @@ class FileProcessor:
                 logger.error(f"Error processing row {row_count} in file {file_path}: {str(e)}")
         
         if batch:
+            logger.info(f"Putting the lasts batch of {len(batch)} documents into queue")
             self._batch_queue.put(batch)
             
         return row_count

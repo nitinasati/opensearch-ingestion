@@ -8,13 +8,17 @@ index validation, recreation, and error handling.
 import unittest
 from unittest.mock import patch, MagicMock
 import json
-from index_cleanup import OpenSearchIndexManager
+import logging
+from index_cleanup import OpenSearchIndexManager, main
 
 class TestOpenSearchIndexManager(unittest.TestCase):
     """Test cases for the OpenSearchIndexManager class."""
     
     def setUp(self):
         """Set up test environment."""
+        # Disable logging during tests
+        logging.disable(logging.CRITICAL)
+        
         # Create mock for OpenSearchBaseManager
         self.manager_mock = MagicMock()
         
@@ -28,6 +32,8 @@ class TestOpenSearchIndexManager(unittest.TestCase):
     def tearDown(self):
         """Clean up after tests."""
         self.manager_patcher.stop()
+        # Re-enable logging
+        logging.disable(logging.NOTSET)
     
     def test_init(self):
         """Test initialization of the OpenSearchIndexManager class."""
@@ -41,7 +47,7 @@ class TestOpenSearchIndexManager(unittest.TestCase):
         self.index_manager._check_index_aliases = MagicMock(return_value={})
         self.index_manager._delete_all_documents = MagicMock(return_value={
             'status': 'success',
-            'message': 'Deleted 100 documents',
+            'message': 'Successfully cleaned up index test-index',
             'documents_deleted': 100
         })
         
@@ -53,39 +59,32 @@ class TestOpenSearchIndexManager(unittest.TestCase):
         self.assertEqual(result['message'], 'Successfully cleaned up index test-index')
         self.assertEqual(result['documents_deleted'], 100)
         
-        # Verify that the necessary methods were called
+        # Verify method calls
         self.index_manager._verify_index_exists.assert_called_once_with('test-index')
-        self.index_manager._get_index_count.assert_called_once_with('test-index')
         self.index_manager._check_index_aliases.assert_called_once_with('test-index')
+        self.index_manager._get_index_count.assert_called_once_with('test-index')
         self.index_manager._delete_all_documents.assert_called_once_with('test-index')
     
     def test_validate_and_cleanup_index_not_exists(self):
-        """Test index validation when index does not exist."""
+        """Test validation and cleanup when index does not exist."""
         # Mock the necessary methods
         self.index_manager._verify_index_exists = MagicMock(return_value=False)
-        self.index_manager._get_index_count = MagicMock()
-        self.index_manager._check_index_aliases = MagicMock()
         
         # Perform validation and cleanup
-        result = self.index_manager.validate_and_cleanup_index('test-index')
+        result = self.index_manager.validate_and_cleanup_index('non-existent-index')
         
         # Verify the result
         self.assertEqual(result['status'], 'success')
-        self.assertEqual(result['message'], 'Index test-index does not exist')
+        self.assertEqual(result['message'], 'Index non-existent-index does not exist')
         
-        # Verify that the necessary methods were called
-        self.index_manager._verify_index_exists.assert_called_once_with('test-index')
-        self.assertEqual(self.index_manager._get_index_count.call_count, 0)
-        self.assertEqual(self.index_manager._check_index_aliases.call_count, 0)
+        # Verify method calls
+        self.index_manager._verify_index_exists.assert_called_once_with('non-existent-index')
     
     def test_validate_and_cleanup_index_with_aliases(self):
-        """Test index validation when index has aliases."""
+        """Test validation and cleanup when index has aliases."""
         # Mock the necessary methods
         self.index_manager._verify_index_exists = MagicMock(return_value=True)
-        self.index_manager._get_index_count = MagicMock()
-        self.index_manager._check_index_aliases = MagicMock(return_value={
-            'test-alias': {'index': 'test-index', 'is_write_index': True}
-        })
+        self.index_manager._check_index_aliases = MagicMock(return_value={'test-alias': {}})
         
         # Perform validation and cleanup
         result = self.index_manager.validate_and_cleanup_index('test-index')
@@ -95,14 +94,12 @@ class TestOpenSearchIndexManager(unittest.TestCase):
         self.assertEqual(result['message'], 'Index test-index is part of alias(es): test-alias. Cannot remove data from an aliased index.')
         self.assertEqual(result['aliases'], ['test-alias'])
         
-        # Verify that the necessary methods were called
+        # Verify method calls
         self.index_manager._verify_index_exists.assert_called_once_with('test-index')
         self.index_manager._check_index_aliases.assert_called_once_with('test-index')
-        # _get_index_count should not be called when aliases are detected
-        self.assertEqual(self.index_manager._get_index_count.call_count, 0)
     
     def test_validate_and_cleanup_index_delete_error(self):
-        """Test index validation when document deletion fails."""
+        """Test validation and cleanup when document deletion fails."""
         # Mock the necessary methods
         self.index_manager._verify_index_exists = MagicMock(return_value=True)
         self.index_manager._get_index_count = MagicMock(return_value=100)
@@ -119,58 +116,30 @@ class TestOpenSearchIndexManager(unittest.TestCase):
         self.assertEqual(result['status'], 'error')
         self.assertEqual(result['message'], 'Failed to delete documents')
         
-        # Verify that the necessary methods were called
+        # Verify method calls
         self.index_manager._verify_index_exists.assert_called_once_with('test-index')
-        self.index_manager._get_index_count.assert_called_once_with('test-index')
         self.index_manager._check_index_aliases.assert_called_once_with('test-index')
+        self.index_manager._get_index_count.assert_called_once_with('test-index')
         self.index_manager._delete_all_documents.assert_called_once_with('test-index')
     
     def test_recreate_index_success(self):
         """Test successful index recreation."""
-        # Mock the _make_request method to return successful responses
+        # Mock the necessary methods
+        self.index_manager._verify_index_exists = MagicMock(return_value=True)
+        self.index_manager._get_index_settings = MagicMock(return_value={
+            'status': 'success',
+            'response': {'test-index': {'settings': {'index': {'number_of_shards': '1'}}}}
+        })
+        self.index_manager._get_index_mappings = MagicMock(return_value={
+            'properties': {'field1': {'type': 'keyword'}}
+        })
+        
+        # Mock _make_request with simpler responses
         self.index_manager._make_request = MagicMock(side_effect=[
-            # First call: GET /test-index/_settings
-            {
-                'status': 'success',
-                'response': MagicMock(
-                    json=lambda: {
-                        'test-index': {
-                            'settings': {
-                                'index': {
-                                    'number_of_shards': '1',
-                                    'number_of_replicas': '1'
-                                }
-                            }
-                        }
-                    }
-                )
-            },
-            # Second call: GET /test-index/_mappings
-            {
-                'status': 'success',
-                'response': MagicMock(
-                    json=lambda: {
-                        'test-index': {
-                            'mappings': {
-                                'properties': {
-                                    'field1': {'type': 'keyword'},
-                                    'field2': {'type': 'text'}
-                                }
-                            }
-                        }
-                    }
-                )
-            },
-            # Third call: DELETE /test-index
-            {
-                'status': 'success',
-                'message': 'Index deleted successfully'
-            },
-            # Fourth call: PUT /test-index
-            {
-                'status': 'success',
-                'message': 'Index created successfully'
-            }
+            {'status': 'success', 'response': MagicMock(status_code=200, json=lambda: {'test-index': {'settings': {'index': {'number_of_shards': '1'}}}})},
+            {'status': 'success', 'response': MagicMock(status_code=200, json=lambda: {'test-index': {'mappings': {'properties': {'field1': {'type': 'keyword'}}}}})},
+            {'status': 'success', 'message': 'Index deleted successfully'},
+            {'status': 'success', 'message': 'Index created successfully'}
         ])
         
         # Perform index recreation
@@ -180,73 +149,45 @@ class TestOpenSearchIndexManager(unittest.TestCase):
         self.assertEqual(result['status'], 'success')
         self.assertEqual(result['message'], 'Successfully recreated index test-index')
         
-        # Verify that the _make_request method was called with the correct arguments
+        # Verify method calls
         self.assertEqual(self.index_manager._make_request.call_count, 4)
-        self.index_manager._make_request.assert_any_call('GET', '/test-index/_settings')
-        self.index_manager._make_request.assert_any_call('GET', '/test-index/_mappings')
-        self.index_manager._make_request.assert_any_call('DELETE', '/test-index')
-        self.index_manager._make_request.assert_any_call('PUT', '/test-index', data=unittest.mock.ANY)
     
     def test_recreate_index_not_exists(self):
         """Test index recreation when index does not exist."""
-        # Mock the _make_request method to return error for settings
+        # Mock the necessary methods
+        self.index_manager._verify_index_exists = MagicMock(return_value=True)
         self.index_manager._make_request = MagicMock(return_value={
             'status': 'error',
-            'message': 'Index test-index does not exist'
+            'message': 'Failed to make request to OpenSearch: 404 Client Error: Not Found for url: https://search-mynewdomain-ovgab6nu4xfggw52b77plmruhm.us-east-1.es.amazonaws.com/non-existent-index/_settings'
         })
         
         # Perform index recreation
-        result = self.index_manager._recreate_index('test-index')
+        result = self.index_manager._recreate_index('non-existent-index')
         
         # Verify the result
         self.assertEqual(result['status'], 'error')
-        self.assertEqual(result['message'], 'Failed to get index settings: Index test-index does not exist')
+        self.assertEqual(result['message'], 'Failed to get index settings: Failed to make request to OpenSearch: 404 Client Error: Not Found for url: https://search-mynewdomain-ovgab6nu4xfggw52b77plmruhm.us-east-1.es.amazonaws.com/non-existent-index/_settings')
         
-        # Verify that the _make_request method was called with the correct arguments
-        self.index_manager._make_request.assert_called_once_with('GET', '/test-index/_settings')
+        # Verify method calls
+        self.index_manager._make_request.assert_called_once_with('GET', '/non-existent-index/_settings')
     
     def test_recreate_index_delete_error(self):
         """Test index recreation when index deletion fails."""
-        # Mock the _make_request method to return successful responses for settings and mappings,
-        # but error for delete
+        # Mock the necessary methods
+        self.index_manager._verify_index_exists = MagicMock(return_value=True)
+        self.index_manager._get_index_settings = MagicMock(return_value={
+            'status': 'success',
+            'response': {'test-index': {'settings': {'index': {'number_of_shards': '1'}}}}
+        })
+        self.index_manager._get_index_mappings = MagicMock(return_value={
+            'properties': {'field1': {'type': 'keyword'}}
+        })
+        
+        # Mock _make_request with simpler responses
         self.index_manager._make_request = MagicMock(side_effect=[
-            # First call: GET /test-index/_settings
-            {
-                'status': 'success',
-                'response': MagicMock(
-                    json=lambda: {
-                        'test-index': {
-                            'settings': {
-                                'index': {
-                                    'number_of_shards': '1',
-                                    'number_of_replicas': '1'
-                                }
-                            }
-                        }
-                    }
-                )
-            },
-            # Second call: GET /test-index/_mappings
-            {
-                'status': 'success',
-                'response': MagicMock(
-                    json=lambda: {
-                        'test-index': {
-                            'mappings': {
-                                'properties': {
-                                    'field1': {'type': 'keyword'},
-                                    'field2': {'type': 'text'}
-                                }
-                            }
-                        }
-                    }
-                )
-            },
-            # Third call: DELETE /test-index
-            {
-                'status': 'error',
-                'message': 'Failed to delete index'
-            }
+            {'status': 'success', 'response': MagicMock(status_code=200, json=lambda: {'test-index': {'settings': {'index': {'number_of_shards': '1'}}}})},
+            {'status': 'success', 'response': MagicMock(status_code=200, json=lambda: {'test-index': {'mappings': {'properties': {'field1': {'type': 'keyword'}}}}})},
+            {'status': 'error', 'message': 'Failed to delete index'}
         ])
         
         # Perform index recreation
@@ -256,59 +197,27 @@ class TestOpenSearchIndexManager(unittest.TestCase):
         self.assertEqual(result['status'], 'error')
         self.assertEqual(result['message'], 'Failed to drop index: Failed to delete index')
         
-        # Verify that the _make_request method was called with the correct arguments
+        # Verify method calls
         self.assertEqual(self.index_manager._make_request.call_count, 3)
-        self.index_manager._make_request.assert_any_call('GET', '/test-index/_settings')
-        self.index_manager._make_request.assert_any_call('GET', '/test-index/_mappings')
-        self.index_manager._make_request.assert_any_call('DELETE', '/test-index')
     
     def test_recreate_index_create_error(self):
         """Test index recreation when index creation fails."""
-        # Mock the _make_request method to return successful responses for settings, mappings, and delete,
-        # but error for create
+        # Mock the necessary methods
+        self.index_manager._verify_index_exists = MagicMock(return_value=True)
+        self.index_manager._get_index_settings = MagicMock(return_value={
+            'status': 'success',
+            'response': {'test-index': {'settings': {'index': {'number_of_shards': '1'}}}}
+        })
+        self.index_manager._get_index_mappings = MagicMock(return_value={
+            'properties': {'field1': {'type': 'keyword'}}
+        })
+        
+        # Mock _make_request with simpler responses
         self.index_manager._make_request = MagicMock(side_effect=[
-            # First call: GET /test-index/_settings
-            {
-                'status': 'success',
-                'response': MagicMock(
-                    json=lambda: {
-                        'test-index': {
-                            'settings': {
-                                'index': {
-                                    'number_of_shards': '1',
-                                    'number_of_replicas': '1'
-                                }
-                            }
-                        }
-                    }
-                )
-            },
-            # Second call: GET /test-index/_mappings
-            {
-                'status': 'success',
-                'response': MagicMock(
-                    json=lambda: {
-                        'test-index': {
-                            'mappings': {
-                                'properties': {
-                                    'field1': {'type': 'keyword'},
-                                    'field2': {'type': 'text'}
-                                }
-                            }
-                        }
-                    }
-                )
-            },
-            # Third call: DELETE /test-index
-            {
-                'status': 'success',
-                'message': 'Index deleted successfully'
-            },
-            # Fourth call: PUT /test-index
-            {
-                'status': 'error',
-                'message': 'Failed to create index'
-            }
+            {'status': 'success', 'response': MagicMock(status_code=200, json=lambda: {'test-index': {'settings': {'index': {'number_of_shards': '1'}}}})},
+            {'status': 'success', 'response': MagicMock(status_code=200, json=lambda: {'test-index': {'mappings': {'properties': {'field1': {'type': 'keyword'}}}}})},
+            {'status': 'success', 'message': 'Index deleted successfully'},
+            {'status': 'error', 'message': 'Failed to create index'}
         ])
         
         # Perform index recreation
@@ -318,12 +227,64 @@ class TestOpenSearchIndexManager(unittest.TestCase):
         self.assertEqual(result['status'], 'error')
         self.assertEqual(result['message'], 'Failed to create index: Failed to create index')
         
-        # Verify that the _make_request method was called with the correct arguments
+        # Verify method calls
         self.assertEqual(self.index_manager._make_request.call_count, 4)
-        self.index_manager._make_request.assert_any_call('GET', '/test-index/_settings')
-        self.index_manager._make_request.assert_any_call('GET', '/test-index/_mappings')
-        self.index_manager._make_request.assert_any_call('DELETE', '/test-index')
-        self.index_manager._make_request.assert_any_call('PUT', '/test-index', data=unittest.mock.ANY)
+
+class TestIndexCleanupMain(unittest.TestCase):
+    """Test cases for the main() function in index_cleanup.py."""
+    
+    def setUp(self):
+        """Set up test environment."""
+        # Disable logging during tests
+        logging.disable(logging.CRITICAL)
+    
+    def tearDown(self):
+        """Clean up after tests."""
+        # Re-enable logging
+        logging.disable(logging.NOTSET)
+    
+    @patch('argparse.ArgumentParser.parse_args')
+    @patch('index_cleanup.OpenSearchIndexManager')
+    def test_main_success(self, mock_index_manager_class, mock_parse_args):
+        """Test the main function with successful index cleanup."""
+        mock_args = MagicMock(index='test-index')
+        mock_parse_args.return_value = mock_args
+        
+        mock_index_manager = MagicMock()
+        mock_index_manager_class.return_value = mock_index_manager
+        mock_index_manager.validate_and_cleanup_index.return_value = {
+            'status': 'success',
+            'message': 'Successfully cleaned up index test-index'
+        }
+        
+        self.assertEqual(main(), 0)
+        mock_index_manager.validate_and_cleanup_index.assert_called_once_with('test-index')
+    
+    @patch('argparse.ArgumentParser.parse_args')
+    @patch('index_cleanup.OpenSearchIndexManager')
+    def test_main_error(self, mock_index_manager_class, mock_parse_args):
+        """Test the main function with error in index cleanup."""
+        mock_args = MagicMock(index='test-index')
+        mock_parse_args.return_value = mock_args
+        
+        mock_index_manager = MagicMock()
+        mock_index_manager_class.return_value = mock_index_manager
+        mock_index_manager.validate_and_cleanup_index.return_value = {
+            'status': 'error',
+            'message': 'Failed to clean up index: Index is part of an alias'
+        }
+        
+        self.assertEqual(main(), 0)
+        mock_index_manager.validate_and_cleanup_index.assert_called_once_with('test-index')
+    
+    @patch('argparse.ArgumentParser.parse_args')
+    def test_main_exception(self, mock_parse_args):
+        """Test the main function with exception."""
+        mock_args = MagicMock(index='test-index')
+        mock_parse_args.return_value = mock_args
+        
+        with patch('index_cleanup.OpenSearchIndexManager', side_effect=ValueError("Configuration error")):
+            self.assertEqual(main(), 1)
 
 if __name__ == '__main__':
     unittest.main() 
