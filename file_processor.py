@@ -16,6 +16,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Queue
 import threading
 import time
+from datetime import datetime
+from dotenv import load_dotenv
+from opensearch_base_manager import OpenSearchBaseManager
+
+# Load environment variables
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +45,16 @@ class FileProcessor:
         self._processed_count = 0
         self._processed_count_from_bulk = 0
         self._lock = threading.Lock()
+        self.opensearch_manager = OpenSearchBaseManager()
+        self.sqs_client = boto3.client('sqs')
+        
+        # Get SQS queue ARN from environment variable
+        self.sqs_dlq_arn = os.getenv('SQS-DLQ-ARN')
+        if not self.sqs_dlq_arn:
+            logger.warning("SQS-DLQ-ARN environment variable not set. Error reporting to SQS will be disabled.")
+        else:
+            logger.info(f"Using SQS DLQ ARN: {self.sqs_dlq_arn}")
+            
         logger.info(f"Initialized FileProcessor with batch_size: {batch_size}, max_workers: {max_workers}")
 
     def _get_files_by_type(self, folder_path: str) -> Tuple[List[str], List[str]]:
@@ -234,6 +250,148 @@ class FileProcessor:
             bulk_request.append(json.dumps(doc))
         return '\n'.join(bulk_request) + '\n'
 
+    def _send_error_to_sqs(self, error_payload: Dict[str, Any]) -> bool:
+        """
+        Send error information to SQS queue.
+        
+        Args:
+            error_payload (Dict[str, Any]): Error information to send
+            
+        Returns:
+            bool: True if message was sent successfully, False otherwise
+        """
+        # Check if SQS ARN is configured
+        if not self.sqs_dlq_arn:
+            logger.warning("SQS-DLQ-ARN not configured. Skipping error reporting to SQS.")
+            return False
+            
+        try:
+            # Extract queue URL from ARN
+            # Format: arn:aws:sqs:region:account-id:queue-name
+            arn_parts = self.sqs_dlq_arn.split(':')
+            if len(arn_parts) < 6:
+                logger.error(f"Invalid SQS ARN format: {self.sqs_dlq_arn}")
+                return False
+                
+            region = arn_parts[3]
+            account_id = arn_parts[4]
+            queue_name = arn_parts[5]
+            
+            # Get queue URL
+            queue_url = f"https://sqs.{region}.amazonaws.com/{account_id}/{queue_name}"
+            
+            # Add timestamp to the payload
+            error_payload['timestamp'] = datetime.now().isoformat()
+            
+            # Check if the message size exceeds 230 KB (235,520 bytes)
+            message_json = json.dumps(error_payload)
+            message_size = len(message_json.encode('utf-8'))
+            
+            if message_size > 235520:  # 230 KB in bytes
+                logger.info(f"Error message size ({message_size} bytes) exceeds 230 KB limit. Splitting into multiple messages.")
+                
+                # Extract the failed records
+                failed_records = error_payload.get('failed_records', [])
+                error_message = error_payload.get('error_message', '')
+                file_key = error_payload.get('file_key', '')
+                source = error_payload.get('source', '')
+                timestamp = error_payload.get('timestamp', '')
+                
+                # Calculate how many records we can fit in each message
+                # Start with a base payload without records
+                base_payload = {
+                    'error_message': error_message,
+                    'file_key': file_key,
+                    'source': source,
+                    'timestamp': timestamp,
+                    'total_records': len(failed_records),
+                    'message_part': 0,
+                    'total_parts': 0  # Will be calculated
+                }
+                
+                # Calculate the size of the base payload
+                base_size = len(json.dumps(base_payload).encode('utf-8'))
+                
+                # Calculate how many records we can fit in each message
+                # Leave some buffer for the record structure and overhead
+                available_size = 235520 - base_size - 1000  # 1 KB buffer
+                
+                # Estimate size per record (average)
+                if failed_records:
+                    sample_record = json.dumps(failed_records[0]).encode('utf-8')
+                    avg_record_size = len(sample_record)
+                    records_per_message = max(1, available_size // avg_record_size)
+                else:
+                    records_per_message = 1
+                
+                # Calculate total number of parts
+                total_parts = (len(failed_records) + records_per_message - 1) // records_per_message
+                
+                # Send each part
+                for i in range(total_parts):
+                    start_idx = i * records_per_message
+                    end_idx = min((i + 1) * records_per_message, len(failed_records))
+                    
+                    part_payload = base_payload.copy()
+                    part_payload['failed_records'] = failed_records[start_idx:end_idx]
+                    part_payload['message_part'] = i + 1
+                    part_payload['total_parts'] = total_parts
+                    
+                    # Send the part
+                    response = self.sqs_client.send_message(
+                        QueueUrl=queue_url,
+                        MessageBody=json.dumps(part_payload)
+                    )
+                    
+                    logger.info(f"Sent part {i+1}/{total_parts} of error message to SQS: {response.get('MessageId')}")
+                
+                return True
+            else:
+                # Send the entire message as is
+                response = self.sqs_client.send_message(
+                    QueueUrl=queue_url,
+                    MessageBody=message_json
+                )
+                
+                logger.info(f"Error message sent to SQS queue: {response.get('MessageId')}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to send error message to SQS: {str(e)}")
+            return False
+
+    def _print_error_records(self, failed_records: List[Dict[str, Any]], file_key: str) -> None:
+        """
+        Print detailed information about failed records.
+        
+        Args:
+            failed_records (List[Dict[str, Any]]): List of failed records with error details
+            file_key (str): File identifier for logging
+        """
+        if not failed_records:
+            return
+            
+        error_message = f"Bulk request had {len(failed_records)} failed records for file {file_key}"
+         
+        # Create a complete error payload with all failed records
+        error_payload = {
+            'error_message': error_message,
+            'failed_records': failed_records,
+            'file_key': file_key,
+            'source': 'opensearch_ingestion'
+        }
+        
+        # Send error to SQS queue
+        self._send_error_to_sqs(error_payload)
+        
+     
+        # Also log individual records for better readability
+        for record in failed_records:
+            logger.error(f"Failed document ID: {record['document_id']}")
+            logger.error(f"Error type: {record['error_type']}")
+            logger.error(f"Error reason: {record['error_reason']}")
+            logger.error("---")
+
     def _process_batch(self, batch: List[Dict[str, Any]], index_name: str, file_key: str) -> bool:
         """
         Process a batch of documents.
@@ -252,7 +410,7 @@ class FileProcessor:
             
             # Send request
             result = self._make_request('POST', '/_bulk', data=bulk_request, headers={'Content-Type': 'application/x-ndjson'})
-            
+          
             # Check for errors
             if result['status'] != 'success':
                 logger.error(f"Bulk request failed for file {file_key}: {result['message']}")
@@ -261,9 +419,23 @@ class FileProcessor:
             # Only try to access response.json() if status is success
             response = result['response'].json()
             if response.get('errors', False):
-                logger.error(f"Bulk request had errors for file {file_key}")
+                # Extract failed records
+                failed_records = []
+                for i, item in enumerate(response.get('items', [])):
+                    index_result = item.get('index', {})
+                    if index_result.get('status', 200) >= 400:  # Error status codes are 400 and above
+                        error_info = {
+                            'document_id': index_result.get('_id', 'unknown'),
+                            'error_type': index_result.get('error', {}).get('type', 'unknown'),
+                            'error_reason': index_result.get('error', {}).get('reason', 'unknown'),
+                            'document': batch[i] if i < len(batch) else 'unknown'
+                        }
+                        failed_records.append(error_info)
+                
+                # Print error records using the dedicated function
+                if failed_records:
+                    self._print_error_records(failed_records, file_key)
                 return False
-            
 
             if 'items' in response:
                 processed_count = len(response['items'])
@@ -294,7 +466,7 @@ class FileProcessor:
                     break
                 
                 success = self._process_batch(batch, index_name, file_key)
-                logger.info(f"Batch of length {len(batch)} processed successfully for file {file_key}")
+                logger.info(f"Batch of length {len(batch)} processed for file {file_key}")
                 if not success:
                     logger.warning(f"Failed to process batch for file {file_key}")
                 self._batch_queue.task_done()

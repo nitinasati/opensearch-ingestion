@@ -374,25 +374,72 @@ Before running in production, perform rigorous testing:
 
 ## Error Handling
 
-The system includes comprehensive error handling for:
-- S3 access issues
-- OpenSearch connection problems
-- CSV/json parsing errors
-- Document validation failures
-- Worker thread exceptions
-- Response handling errors
-- Alias operation failures
+The system includes comprehensive error handling:
+- Validates environment variables
+- Checks for required permissions
+- Verifies index existence
+- Validates document counts
+- Handles network errors
+- Provides detailed error messages
+
+## Dead Letter Queue (DLQ) and Message Splitting
+
+The system includes robust error reporting through SQS Dead Letter Queues (DLQ) with automatic message splitting for large payloads:
+
+### DLQ Configuration
+- Configure SQS DLQ ARN through environment variables
+- Failed records are automatically sent to the configured DLQ
+- Each error message includes:
+  - Error details and messages
+  - Source file information
+  - Failed record data
+  - Timestamp and metadata
+
+### Message Splitting
+When error payloads exceed SQS's 230 KB message size limit, the system automatically splits them:
+
+1. **Size Calculation**:
+   - Base payload size (metadata, headers)
+   - Available space for records
+   - Average record size estimation
+
+2. **Splitting Process**:
+   - Divides records into multiple messages
+   - Each message includes:
+     - Part number (message_part)
+     - Total parts (total_parts)
+     - Total records (total_records)
+     - Timestamp
+     - Original error information
+
+3. **Message Structure**:
+   ```json
+   {
+     "error_message": "Error details",
+     "file_key": "source/file/path",
+     "source": "file_source",
+     "message_part": 1,
+     "total_parts": 3,
+     "total_records": 1000,
+     "timestamp": "2024-03-21T10:00:00Z",
+     "failed_records": [...]
+   }
+   ```
+
+4. **Recovery Process**:
+   - Messages can be reassembled using part numbers
+   - Total records count ensures completeness
+   - Timestamps help with message ordering
+   - Original error context is preserved
 
 ## Logging
 
-Detailed logging is provided for:
-- Processing progress
-- Error messages
+All operations are logged with:
+- Timestamps
+- Operation details
+- Success/failure status
 - Performance metrics
-- Document counts
-- Worker thread status
-- API response details
-- Operation status and results
+- Error details when applicable
 
 ## Contributing
 
@@ -576,6 +623,56 @@ The system includes comprehensive error handling:
 - Validates document counts
 - Handles network errors
 - Provides detailed error messages
+
+## Dead Letter Queue (DLQ) and Message Splitting
+
+The system includes robust error reporting through SQS Dead Letter Queues (DLQ) with automatic message splitting for large payloads:
+
+### DLQ Configuration
+- Configure SQS DLQ ARN through environment variables
+- Failed records are automatically sent to the configured DLQ
+- Each error message includes:
+  - Error details and messages
+  - Source file information
+  - Failed record data
+  - Timestamp and metadata
+
+### Message Splitting
+When error payloads exceed SQS's 230 KB message size limit, the system automatically splits them:
+
+1. **Size Calculation**:
+   - Base payload size (metadata, headers)
+   - Available space for records
+   - Average record size estimation
+
+2. **Splitting Process**:
+   - Divides records into multiple messages
+   - Each message includes:
+     - Part number (message_part)
+     - Total parts (total_parts)
+     - Total records (total_records)
+     - Timestamp
+     - Original error information
+
+3. **Message Structure**:
+   ```json
+   {
+     "error_message": "Error details",
+     "file_key": "source/file/path",
+     "source": "file_source",
+     "message_part": 1,
+     "total_parts": 3,
+     "total_records": 1000,
+     "timestamp": "2024-03-21T10:00:00Z",
+     "failed_records": [...]
+   }
+   ```
+
+4. **Recovery Process**:
+   - Messages can be reassembled using part numbers
+   - Total records count ensures completeness
+   - Timestamps help with message ordering
+   - Original error context is preserved
 
 ## Logging
 
