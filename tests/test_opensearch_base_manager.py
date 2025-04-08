@@ -641,73 +641,53 @@ class TestOpenSearchBaseManager(unittest.TestCase):
             '/test-index/_alias'
         )
 
+    @patch('requests.get')
     @patch('time.sleep')
-    def test_test_connection_retry_success(self, mock_sleep):
+    def test_test_connection_retry_success(self, mock_sleep, mock_get):
         """Test that _test_connection retries on failure and succeeds eventually."""
-        # Reset the mock_get after initialization
-        self.mock_get.reset_mock()
+        # Configure mock responses
+        mock_success = MagicMock()
+        mock_success.status_code = 200
+        mock_success.raise_for_status.return_value = None
         
-        # Configure mock_get to fail twice and then succeed
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.raise_for_status.return_value = None
-        
-        # Create a new side_effect list that includes the initialization success
-        # followed by the test scenario (2 failures + 1 success)
-        self.mock_get.side_effect = [
-            mock_response,  # For initialization
+        # Configure mock to fail twice and then succeed
+        mock_get.side_effect = [
             requests.exceptions.ConnectionError("Connection error"),
             requests.exceptions.ConnectionError("Connection error"),
-            mock_response
+            mock_success
         ]
         
-        # Create a new instance to trigger initialization
-        manager = OpenSearchBaseManager()
-        
         # Call the method directly
-        manager._test_connection()
+        self.manager._test_connection()
         
-        # Verify that get was called 4 times (1 for init + 3 for test)
-        self.assertEqual(self.mock_get.call_count, 4)
+        # Verify that get was called 3 times
+        self.assertEqual(mock_get.call_count, 3)
         
         # Verify that sleep was called twice with exponential backoff
         self.assertEqual(mock_sleep.call_count, 2)
         mock_sleep.assert_any_call(1)  # First retry: 2^0 = 1 second
         mock_sleep.assert_any_call(2)  # Second retry: 2^1 = 2 seconds
     
+    @patch('requests.get')
     @patch('time.sleep')
-    def test_test_connection_all_retries_fail(self, mock_sleep):
+    def test_test_connection_all_retries_fail(self, mock_sleep, mock_get):
         """Test that _test_connection raises an exception after all retries fail."""
-        # Reset the mock_get after initialization
-        self.mock_get.reset_mock()
-        
-        # Configure mock_get to succeed for initialization but fail for the test
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        
-        mock_response.raise_for_status.return_value = None
-        
-        # Create a new side_effect list that includes the initialization success
-        # followed by the test scenario (3 failures)
-        self.mock_get.side_effect = [
-            mock_response,  # For initialization
+        # Configure mock to fail all three times
+        mock_get.side_effect = [
             requests.exceptions.ConnectionError("Connection error"),
             requests.exceptions.ConnectionError("Connection error"),
             requests.exceptions.ConnectionError("Connection error")
         ]
         
-        # Create a new instance to trigger initialization
-        manager = OpenSearchBaseManager()
-        
         # Expect an OpenSearchException to be raised
         with self.assertRaises(OpenSearchException) as context:
-            manager._test_connection()
+            self.manager._test_connection()
         
         # Verify the exception message
         self.assertIn("Failed to connect to OpenSearch after 3 attempts", str(context.exception))
         
-        # Verify that get was called 4 times (1 for init + 3 for test)
-        self.assertEqual(self.mock_get.call_count, 4)
+        # Verify that get was called 3 times
+        self.assertEqual(mock_get.call_count, 3)
         
         # Verify that sleep was called twice with exponential backoff
         self.assertEqual(mock_sleep.call_count, 2)

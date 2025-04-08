@@ -6,12 +6,10 @@ A Python-based system for ingesting data from multiple sources (S3, local files,
 
 - Efficient CSV and JSON file processing using pandas
 - Parallel processing with configurable number of threads
-- Batch processing for optimal performance
-- Document count validation
+- Document count validation (loaded to opensearch vs source records to be loaded) 
 - Comprehensive error handling and logging
-- OpenSearch bulk ingestion
+- Failed records to go into DLQ for further troubleshooting and correction
 - Robust response handling for OpenSearch operations
-- Support for both local files and S3 sources
 - Resume and fresh load modes for interrupted operations
 - Flexible file source options (local folder, S3, individual files)
 - Upsert capability for updating existing documents (if source file has id field/attribute which uniquely identifies the document - must match with _id in index)
