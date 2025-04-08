@@ -44,12 +44,9 @@ Required IAM permissions:
         {
             "Effect": "Allow",
             "Action": [
-                "es:ESHttp*",
-                "es:DescribeDomain",
-                "es:DescribeDomains",
-                "es:DescribeDomainConfig",
-                "es:ESHttp*",
-                "es:UpdateDomainConfig"
+				"es:ESHttpPost",
+				"es:ESHttpPut",
+				"es:ESHttpGet"
             ],
             "Resource": "arn:aws:es:region:account:domain/domain-name"
         }
@@ -72,6 +69,21 @@ Required IAM permissions:
                 "arn:aws:s3:::your-bucket-name/*"
             ]
         }
+    ]
+}
+```
+3. **SQS Permissions** (for putting failure records):
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+		{
+			"Effect": "Allow",
+			"Action": [
+				"sqs:SendMessage"
+			],
+			"Resource": "arn:aws:sqs:us-east-1:416449661344:mysamplequeue-dlq"
+		}
     ]
 }
 ```

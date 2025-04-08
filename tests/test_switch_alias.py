@@ -233,6 +233,42 @@ class TestOpenSearchAliasManager(unittest.TestCase):
         result = self.manager._get_alias_info('non-existent-alias')
         self.assertEqual(result, {}, "Should return an empty dictionary when alias does not exist")
     
+    def test_get_alias_info_api_error(self):
+        """Test getting alias info when _make_request returns an error."""
+        # Mock _make_request to return an error status
+        self.manager._make_request = MagicMock(return_value={
+            'status': 'error',
+            'message': 'API request failed'
+        })
+        
+        result = self.manager._get_alias_info('test-alias')
+        self.assertEqual(result, {}, "Should return an empty dictionary on API error")
+        self.manager._make_request.assert_called_once_with('GET', '/_alias/test-alias')
+
+    def test_get_alias_info_non_200_status(self):
+        """Test getting alias info when the API returns a non-200 status code."""
+        # Mock _make_request to return success status but non-200 response code
+        mock_response = MagicMock()
+        mock_response.status_code = 404  # Example: Not Found
+        
+        self.manager._make_request = MagicMock(return_value={
+            'status': 'success',
+            'response': mock_response
+        })
+        
+        result = self.manager._get_alias_info('not-found-alias')
+        self.assertEqual(result, {}, "Should return an empty dictionary on non-200 status code")
+        self.manager._make_request.assert_called_once_with('GET', '/_alias/not-found-alias')
+
+    def test_get_alias_info_request_exception(self):
+        """Test getting alias info when _make_request raises an exception."""
+        # Mock _make_request to raise an exception
+        self.manager._make_request = MagicMock(side_effect=Exception("Network Error"))
+        
+        result = self.manager._get_alias_info('test-alias')
+        self.assertEqual(result, {}, "Should return an empty dictionary on request exception")
+        self.manager._make_request.assert_called_once_with('GET', '/_alias/test-alias')
+
     def test_switch_alias_same_indices(self):
         """Test switching alias when source and target indices are the same."""
         # Set up test parameters

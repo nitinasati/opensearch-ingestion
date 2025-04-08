@@ -160,6 +160,37 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
             self.assertEqual(result['actual_count'], 0)
             self.assertEqual(result['documents_indexed'], 0)
     
+    def test_verify_document_count_resume_success(self):
+        """Test successful document count verification in resume mode."""
+        # Set the expected new documents count on the mock file_processor
+        self.manager.file_processor._processed_count_from_bulk = 50
+        
+        result = self.manager._verify_document_count('test-index', 50, resume=True)
+        
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['message'], 'Document count verification successful: 50 new documents match expected count')
+        self.assertEqual(result['expected_count'], 50)
+        self.assertEqual(result['actual_count'], 50)
+        self.assertEqual(result['documents_indexed'], 50)
+
+    def test_verify_document_count_resume_mismatch(self):
+        """Test document count verification mismatch in resume mode."""
+        # Set a different processed count on the mock file_processor
+        processed_count_attr = '_processed_count_from_bulk'
+        setattr(self.manager.file_processor, processed_count_attr, 45)
+        
+        result = self.manager._verify_document_count('test-index', 50, resume=True)
+        
+        self.assertEqual(result['status'], 'error') # Should be error on mismatch
+        self.assertEqual(result['message'], 'Document count mismatch: Expected 50 new documents, got 45')
+        self.assertEqual(result['expected_count'], 50)
+        self.assertEqual(result['actual_count'], 45)
+        self.assertEqual(result['documents_indexed'], 45)
+
+        # Clean up the attribute set on the mock
+        if hasattr(self.manager.file_processor, processed_count_attr):
+            delattr(self.manager.file_processor, processed_count_attr)
+
     def test_get_processed_files(self):
         """Test getting processed files."""
         # Mock file reading
