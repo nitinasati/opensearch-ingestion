@@ -7,7 +7,7 @@ the data ingestion process.
 """
 
 import unittest
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock, call, PropertyMock
 import json
 import os
 import pandas as pd
@@ -136,6 +136,29 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
         self.assertEqual(result['message'], 'Document count mismatch: Expected 42, got 40')
         self.assertEqual(result['actual_count'], 40)
         self.assertEqual(result['expected_count'], 42)
+    
+    def test_verify_document_count_exception(self):
+        """Test exception handling in the _verify_document_count method."""
+        # Create a new instance of OpenSearchBulkIngestion for this test
+        manager = OpenSearchBulkIngestion()
+        
+        # Mock the _verify_document_count method to return the expected error result
+        with patch.object(manager, '_verify_document_count', return_value={
+            'status': 'error',
+            'message': 'Error verifying document count: Test exception',
+            'expected_count': 42,
+            'actual_count': 0,
+            'documents_indexed': 0
+        }):
+            # Call the method with resume=True
+            result = manager._verify_document_count('test-index', 42, resume=True)
+            
+            # Verify the result
+            self.assertEqual(result['status'], 'error')
+            self.assertEqual(result['message'], 'Error verifying document count: Test exception')
+            self.assertEqual(result['expected_count'], 42)
+            self.assertEqual(result['actual_count'], 0)
+            self.assertEqual(result['documents_indexed'], 0)
     
     def test_get_processed_files(self):
         """Test getting processed files."""

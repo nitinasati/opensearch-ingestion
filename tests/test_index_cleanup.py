@@ -122,6 +122,21 @@ class TestOpenSearchIndexManager(unittest.TestCase):
         self.index_manager._get_index_count.assert_called_once_with('test-index')
         self.index_manager._delete_all_documents.assert_called_once_with('test-index')
     
+    def test_validate_and_cleanup_index_exception(self):
+        """Test exception handling in the validate_and_cleanup_index method."""
+        # Mock the necessary methods to raise an exception
+        self.index_manager._verify_index_exists = MagicMock(side_effect=Exception("Test exception"))
+        
+        # Perform validation and cleanup
+        result = self.index_manager.validate_and_cleanup_index('test-index')
+        
+        # Verify the result
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['message'], 'Error during index validation and cleanup: Test exception')
+        
+        # Verify method calls
+        self.index_manager._verify_index_exists.assert_called_once_with('test-index')
+    
     def test_recreate_index_success(self):
         """Test successful index recreation."""
         # Mock the necessary methods
