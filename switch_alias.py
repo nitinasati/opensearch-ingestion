@@ -190,15 +190,35 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
         try:
             source_count = self._get_index_count(source_index)
             target_count = self._get_index_count(target_index)
-            percentage_diff = 0
+            
             # Get threshold from environment variable, default to 10%
             threshold = float(os.getenv('DOCUMENT_COUNT_THRESHOLD', '10'))
+            
             if target_count == 0 and source_count > 0:
                 error_msg = "Target index is empty, can't switch alias"
                 logger.error(error_msg)
                 return {
                     "status": "error",
                     "message": error_msg
+                }
+            
+            # Calculate percentage difference
+            if source_count > 0:
+                percentage_diff = abs((target_count - source_count) / source_count) * 100
+            else:
+                percentage_diff = 0 if target_count == 0 else 100
+            
+            # Check if difference exceeds threshold
+            if percentage_diff > threshold:
+                error_msg = f"Document count difference ({percentage_diff:.2f}%) exceeds threshold ({threshold}%)"
+                logger.error(error_msg)
+                return {
+                    "status": "error",
+                    "message": error_msg,
+                    "source_count": source_count,
+                    "target_count": target_count,
+                    "percentage_diff": percentage_diff,
+                    "threshold": threshold
                 }
             
             success_msg = "Document count validation passed"

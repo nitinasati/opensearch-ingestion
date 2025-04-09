@@ -6,7 +6,7 @@ authentication, request handling, and error handling.
 """
 
 import unittest
-from unittest.mock import patch, MagicMock, ANY
+from unittest.mock import patch, MagicMock, ANY, call
 import requests
 import json
 import os
@@ -717,6 +717,69 @@ class TestOpenSearchBaseManager(unittest.TestCase):
             'DELETE',
             '/test-index'
         )
+
+    def test_log_request_error(self):
+        """Test error logging functionality."""
+        # Create a mock exception with response attributes
+        mock_response = MagicMock()
+        mock_response.text = "Error response text"
+        mock_response.headers = {"content-type": "application/json"}
+        
+        mock_exception = MagicMock()
+        mock_exception.response = mock_response
+        mock_exception.__str__.return_value = "Test error message"
+        
+        # Test logging with retry information
+        with self.assertLogs(level='ERROR') as log:
+            self.manager._log_request_error(mock_exception, 1, 3)
+            
+            # Verify the error messages
+            self.assertEqual(len(log.output), 3)
+            self.assertIn("Error making request to OpenSearch (Attempt 1/3): Test error message", log.output[0])
+            self.assertIn("Response text: Error response text", log.output[1])
+            self.assertIn("Response headers: {'content-type': 'application/json'}", log.output[2])
+        
+        # Test logging without response attributes
+        # Create a mock exception without response attribute
+        mock_exception_no_response = MagicMock()
+        mock_exception_no_response.__str__.return_value = "Error without response"
+        # Explicitly set response to None to ensure it's not treated as having a response
+        mock_exception_no_response.response = None
+        
+        with self.assertLogs(level='ERROR') as log:
+            self.manager._log_request_error(mock_exception_no_response, 2, 3)
+            
+            # Verify only the error message is logged
+            self.assertEqual(len(log.output), 1)
+            self.assertIn("Error making request to OpenSearch (Attempt 2/3): Error without response", log.output[0])
+
+    def test_log_connection_error_basic(self):
+        """Test basic connection error logging."""
+        with patch('opensearch_base_manager.logger') as mock_logger:
+            exception = Exception("Connection failed")
+            self.manager._log_connection_error(exception, 1, 3)
+            mock_logger.error.assert_called_once_with(
+                "Error connecting to OpenSearch (Attempt 1/3): Connection failed"
+            )
+
+    def test_log_connection_error_with_response(self):
+        """Test connection error logging with response text."""
+        with patch('opensearch_base_manager.logger') as mock_logger:
+            # Create a mock response with text
+            mock_response = MagicMock()
+            mock_response.text = "Error response text"
+            
+            # Create an exception with response attribute
+            exception = Exception("Connection failed")
+            exception.response = mock_response
+            
+            self.manager._log_connection_error(exception, 1, 3)
+            
+            # Verify both error messages were logged
+            mock_logger.error.assert_has_calls([
+                call("Error connecting to OpenSearch (Attempt 1/3): Connection failed"),
+                call("Response text: Error response text")
+            ])
 
 if __name__ == '__main__':
     unittest.main() 
