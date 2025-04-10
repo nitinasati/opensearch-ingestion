@@ -1,14 +1,7 @@
 {
-  "member_index_primary": [
-    "C:\\Users\\itsme\\git\\opensearch-ingestion\\opensearch-ingestion\\testdata\\member_data1.csv",
-    "C:\\Users\\itsme\\git\\opensearch-ingestion\\opensearch-ingestion\\testdata\\member_data2.csv",
-    "C:\\Users\\itsme\\git\\opensearch-ingestion\\opensearch-ingestion\\testdata\\member_data3.csv",
-    "C:\\Users\\itsme\\git\\opensearch-ingestion\\opensearch-ingestion\\testdata\\member_data1.json",
-    "C:\\Users\\itsme\\git\\opensearch-ingestion\\opensearch-ingestion\\testdata\\member_data2.json",
-    "C:\\Users\\itsme\\git\\opensearch-ingestion\\opensearch-ingestion\\testdata\\member_data3.json"
-  ],
+  "member_index_primary": [],
   "member_index_secondary": [
-    "./testdata/member_data1.json"
+    "C:\\Users\\itsme\\git\\opensearch-ingestion-server\\opensearch-ingestion\\testdata\\member_data2.json"
   ],
   "test-index": [
     "file1.csv",
