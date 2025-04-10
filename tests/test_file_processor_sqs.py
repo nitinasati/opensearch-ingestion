@@ -25,13 +25,15 @@ class TestFileProcessorSQS(unittest.TestCase):
         """Set up test environment."""
         # Mock environment variables
         self.env_patcher = patch.dict('os.environ', {
-            'SQS-DLQ-ARN': 'arn:aws:sqs:us-east-1:416449661344:mysamplequeue-dlq'
+            'SQS-DLQ-ARN': 'arn:aws:sqs:us-east-1:416449661344:mysamplequeue-dlq',
+            'DLQ': 'enabled'  # Enable DLQ for tests
         })
         self.env_patcher.start()
         
         # Create a mock for boto3.client
         self.sqs_client_mock = MagicMock()
         self.sqs_client_mock.send_message.return_value = {'MessageId': 'test-message-id'}
+        self.sqs_client_mock.get_queue_url.return_value = {'QueueUrl': 'https://sqs.us-east-1.amazonaws.com/416449661344/mysamplequeue-dlq'}
         
         # Create a mock for boto3.client
         self.boto3_patcher = patch('boto3.client', return_value=self.sqs_client_mock)
@@ -50,11 +52,42 @@ class TestFileProcessorSQS(unittest.TestCase):
         # Verify that the SQS client was created
         self.assertIsNotNone(self.file_processor.sqs_client)
         self.assertEqual(self.file_processor.sqs_dlq_arn, 'arn:aws:sqs:us-east-1:416449661344:mysamplequeue-dlq')
+        self.assertTrue(self.file_processor.dlq_enabled)
     
     def test_init_without_sqs_arn(self):
         """Test initialization without SQS ARN."""
         # Mock environment variables without SQS ARN but with required OpenSearch endpoint
         with patch.dict('os.environ', {
+            'OPENSEARCH_ENDPOINT': 'test-endpoint',
+            'AWS_REGION': 'us-east-1',
+            'VERIFY_SSL': 'false',
+            'DLQ': 'enabled'  # DLQ is enabled but no ARN
+        }, clear=True):
+            # Mock AWS session and credentials
+            mock_session = MagicMock()
+            mock_credentials = MagicMock()
+            mock_credentials.access_key = 'test-access-key'
+            mock_credentials.secret_key = 'test-secret-key'
+            mock_credentials.token = 'test-token'
+            mock_session.get_credentials.return_value = mock_credentials
+            
+            # Mock boto3.Session
+            with patch('boto3.Session', return_value=mock_session):
+                # Mock AWS4Auth
+                with patch('requests_aws4auth.AWS4Auth', return_value=MagicMock()):
+                    # Mock requests to prevent actual HTTP calls
+                    with patch('requests.get', return_value=MagicMock(status_code=200)):
+                        with patch('requests.post', return_value=MagicMock(status_code=200)):
+                            file_processor = FileProcessor()
+                            self.assertIsNone(file_processor.sqs_dlq_arn)
+                            self.assertFalse(file_processor.dlq_enabled)
+    
+    def test_init_with_dlq_disabled(self):
+        """Test initialization with DLQ disabled."""
+        # Mock environment variables with DLQ disabled
+        with patch.dict('os.environ', {
+            'SQS-DLQ-ARN': 'arn:aws:sqs:us-east-1:416449661344:mysamplequeue-dlq',
+            'DLQ': 'disabled',
             'OPENSEARCH_ENDPOINT': 'test-endpoint',
             'AWS_REGION': 'us-east-1',
             'VERIFY_SSL': 'false'
@@ -75,7 +108,9 @@ class TestFileProcessorSQS(unittest.TestCase):
                     with patch('requests.get', return_value=MagicMock(status_code=200)):
                         with patch('requests.post', return_value=MagicMock(status_code=200)):
                             file_processor = FileProcessor()
+                            self.assertIsNone(file_processor.sqs_client)
                             self.assertIsNone(file_processor.sqs_dlq_arn)
+                            self.assertFalse(file_processor.dlq_enabled)
     
     def test_send_error_to_sqs_success(self):
         """Test successful sending of error message to SQS."""
@@ -99,6 +134,9 @@ class TestFileProcessorSQS(unittest.TestCase):
         
         # Verify the result
         self.assertTrue(result)
+        
+        # Verify that get_queue_url was called
+        self.sqs_client_mock.get_queue_url.assert_called_once_with(QueueName='mysamplequeue-dlq')
         
         # Verify that send_message was called with the correct arguments
         self.sqs_client_mock.send_message.assert_called_once()
@@ -158,8 +196,8 @@ class TestFileProcessorSQS(unittest.TestCase):
     
     def test_send_error_to_sqs_exception(self):
         """Test sending error message to SQS when an exception occurs."""
-        # Make send_message raise an exception
-        self.sqs_client_mock.send_message.side_effect = Exception('Test exception')
+        # Make get_queue_url raise an exception
+        self.sqs_client_mock.get_queue_url.side_effect = Exception('Test exception')
         
         # Create a test error payload
         error_payload = {
@@ -199,6 +237,9 @@ class TestFileProcessorSQS(unittest.TestCase):
             
             # Verify the result
             self.assertTrue(result)
+            
+            # Verify that get_queue_url was called
+            self.sqs_client_mock.get_queue_url.assert_called_once_with(QueueName='mysamplequeue-dlq')
             
             # Verify that send_message was called multiple times
             self.assertGreater(self.sqs_client_mock.send_message.call_count, 1)
