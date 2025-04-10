@@ -44,12 +44,9 @@ Required IAM permissions:
         {
             "Effect": "Allow",
             "Action": [
-                "es:ESHttp*",
-                "es:DescribeDomain",
-                "es:DescribeDomains",
-                "es:DescribeDomainConfig",
-                "es:ESHttp*",
-                "es:UpdateDomainConfig"
+				"es:ESHttpPost",
+				"es:ESHttpPut",
+				"es:ESHttpGet"
             ],
             "Resource": "arn:aws:es:region:account:domain/domain-name"
         }
@@ -71,6 +68,44 @@ Required IAM permissions:
                 "arn:aws:s3:::your-bucket-name",
                 "arn:aws:s3:::your-bucket-name/*"
             ]
+        }
+    ]
+}
+```
+3. **SQS Permissions** (for error reporting to DLQ):
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+		{
+			"Effect": "Allow",
+			"Action": [
+				"sqs:GetQueueUrl",
+				"sqs:SendMessage"
+			],
+			"Resource": "arn:aws:sqs:region:account-id:queue-name"
+		}
+    ]
+}
+```
+
+Note: For SQS permissions, replace:
+- `region` with your AWS region (e.g., us-east-1)
+- `account-id` with your AWS account ID
+- `queue-name` with your actual queue name
+
+If you want to grant permissions to all queues in your account (not recommended for production), you can use:
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "sqs:GetQueueUrl",
+                "sqs:SendMessage"
+            ],
+            "Resource": "arn:aws:sqs:region:account-id:*"
         }
     ]
 }
@@ -483,6 +518,10 @@ LOG_FORMAT=%(asctime)s - %(name)s - %(levelname)s - %(message)s
 
 # SSL Configuration
 VERIFY_SSL=false  # Set to true in production
+
+# DLQ Configuration
+DLQ=enabled  # Set to 'enabled' to enable SQS DLQ for error reporting, 'disabled' to skip
+SQS-DLQ-ARN=arn:aws:sqs:region:account-id:queue-name  # Required if DLQ is enabled
 
 # Optional environment variables
 DOCUMENT_COUNT_THRESHOLD=100  # Percentage difference threshold for alias switch operation to avoid alias switch when document count is 0 in target index

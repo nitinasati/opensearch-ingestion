@@ -137,29 +137,37 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
         self.assertEqual(result['actual_count'], 40)
         self.assertEqual(result['expected_count'], 42)
     
-    def test_verify_document_count_exception(self):
-        """Test exception handling in the _verify_document_count method."""
-        # Create a new instance of OpenSearchBulkIngestion for this test
-        manager = OpenSearchBulkIngestion()
+    def test_verify_document_count_resume_success(self):
+        """Test successful document count verification in resume mode."""
+        # Set the expected new documents count on the mock file_processor
+        self.manager.file_processor._processed_count_from_bulk = 50
         
-        # Mock the _verify_document_count method to return the expected error result
-        with patch.object(manager, '_verify_document_count', return_value={
-            'status': 'error',
-            'message': 'Error verifying document count: Test exception',
-            'expected_count': 42,
-            'actual_count': 0,
-            'documents_indexed': 0
-        }):
-            # Call the method with resume=True
-            result = manager._verify_document_count('test-index', 42, resume=True)
-            
-            # Verify the result
-            self.assertEqual(result['status'], 'error')
-            self.assertEqual(result['message'], 'Error verifying document count: Test exception')
-            self.assertEqual(result['expected_count'], 42)
-            self.assertEqual(result['actual_count'], 0)
-            self.assertEqual(result['documents_indexed'], 0)
-    
+        result = self.manager._verify_document_count('test-index', 50, resume=True)
+        
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['message'], 'Document count verification successful: 50 new documents match expected count')
+        self.assertEqual(result['expected_count'], 50)
+        self.assertEqual(result['actual_count'], 50)
+        self.assertEqual(result['documents_indexed'], 50)
+
+    def test_verify_document_count_resume_mismatch(self):
+        """Test document count verification mismatch in resume mode."""
+        # Set a different processed count on the mock file_processor
+        processed_count_attr = '_processed_count_from_bulk'
+        setattr(self.manager.file_processor, processed_count_attr, 45)
+        
+        result = self.manager._verify_document_count('test-index', 50, resume=True)
+        
+        self.assertEqual(result['status'], 'error') # Should be error on mismatch
+        self.assertEqual(result['message'], 'Document count mismatch: Expected 50 new documents, got 45')
+        self.assertEqual(result['expected_count'], 50)
+        self.assertEqual(result['actual_count'], 45)
+        self.assertEqual(result['documents_indexed'], 45)
+
+        # Clean up the attribute set on the mock
+        if hasattr(self.manager.file_processor, processed_count_attr):
+            delattr(self.manager.file_processor, processed_count_attr)
+
     def test_get_processed_files(self):
         """Test getting processed files."""
         # Mock file reading
@@ -599,6 +607,30 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
         self.manager.index_manager.validate_and_cleanup_index.assert_called_once_with('test-index')
         self.manager._process_files.assert_called_once()
         self.manager._verify_results.assert_called_once()
+
+    def test_clear_processed_files_all(self):
+        """Test clearing all processed files tracking data."""
+        # Mock the file operations
+        mock_open = MagicMock()
+        mock_file = MagicMock()
+        mock_open.return_value.__enter__.return_value = mock_file
+        
+        # Mock json.dump to verify it's called with an empty dict
+        with patch('builtins.open', mock_open), \
+             patch('json.dump') as mock_json_dump, \
+             patch('bulkupdate.logger') as mock_logger:
+            
+            # Call the method with index_name=None to clear all tracking data
+            self.manager._clear_processed_files(None)
+            
+            # Verify file operations
+            mock_open.assert_called_once_with(TRACKING_FILE, 'w')
+            
+            # Verify json.dump was called with an empty dict
+            mock_json_dump.assert_called_once_with({}, mock_file, indent=2)
+            
+            # Verify logger was called with the correct message
+            mock_logger.info.assert_called_once_with("Cleared all processed files tracking data")
 
 class TestBulkUpdateMain(unittest.TestCase):
     """Test cases for the main function in bulkupdate.py."""

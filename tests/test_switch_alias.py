@@ -233,6 +233,42 @@ class TestOpenSearchAliasManager(unittest.TestCase):
         result = self.manager._get_alias_info('non-existent-alias')
         self.assertEqual(result, {}, "Should return an empty dictionary when alias does not exist")
     
+    def test_get_alias_info_api_error(self):
+        """Test getting alias info when _make_request returns an error."""
+        # Mock _make_request to return an error status
+        self.manager._make_request = MagicMock(return_value={
+            'status': 'error',
+            'message': 'API request failed'
+        })
+        
+        result = self.manager._get_alias_info('test-alias')
+        self.assertEqual(result, {}, "Should return an empty dictionary on API error")
+        self.manager._make_request.assert_called_once_with('GET', '/_alias/test-alias')
+
+    def test_get_alias_info_non_200_status(self):
+        """Test getting alias info when the API returns a non-200 status code."""
+        # Mock _make_request to return success status but non-200 response code
+        mock_response = MagicMock()
+        mock_response.status_code = 404  # Example: Not Found
+        
+        self.manager._make_request = MagicMock(return_value={
+            'status': 'success',
+            'response': mock_response
+        })
+        
+        result = self.manager._get_alias_info('not-found-alias')
+        self.assertEqual(result, {}, "Should return an empty dictionary on non-200 status code")
+        self.manager._make_request.assert_called_once_with('GET', '/_alias/not-found-alias')
+
+    def test_get_alias_info_request_exception(self):
+        """Test getting alias info when _make_request raises an exception."""
+        # Mock _make_request to raise an exception
+        self.manager._make_request = MagicMock(side_effect=Exception("Network Error"))
+        
+        result = self.manager._get_alias_info('test-alias')
+        self.assertEqual(result, {}, "Should return an empty dictionary on request exception")
+        self.manager._make_request.assert_called_once_with('GET', '/_alias/test-alias')
+
     def test_switch_alias_same_indices(self):
         """Test switching alias when source and target indices are the same."""
         # Set up test parameters
@@ -622,6 +658,161 @@ class TestOpenSearchAliasManager(unittest.TestCase):
             ]
         }
         self.manager._make_request.assert_any_call('POST', ALIASES_ENDPOINT, data=expected_data)
+
+    def test_validate_document_count_difference_success(self):
+        """Test successful document count validation when difference is within threshold."""
+        # Mock _get_index_count to return specific values
+        self.manager._get_index_count = MagicMock(side_effect=[100, 105])
+        
+        # Set threshold to 10%
+        with patch.dict('os.environ', {'DOCUMENT_COUNT_THRESHOLD': '10'}):
+            result = self.manager._validate_document_count_difference('source-index', 'target-index')
+        
+        # Verify result
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['source_count'], 100)
+        self.assertEqual(result['target_count'], 105)
+        self.assertAlmostEqual(result['percentage_diff'], 5.0)
+        self.assertEqual(result['threshold'], 10.0)
+        
+        # Verify _get_index_count was called with correct arguments
+        self.manager._get_index_count.assert_any_call('source-index')
+        self.manager._get_index_count.assert_any_call('target-index')
+    
+    def test_validate_document_count_difference_threshold_exceeded(self):
+        """Test document count validation when difference exceeds threshold."""
+        # Mock _get_index_count to return values with large difference
+        self.manager._get_index_count = MagicMock(side_effect=[100, 120])
+        
+        # Set threshold to 10%
+        with patch.dict('os.environ', {'DOCUMENT_COUNT_THRESHOLD': '10'}):
+            result = self.manager._validate_document_count_difference('source-index', 'target-index')
+        
+        # Verify result
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['source_count'], 100)
+        self.assertEqual(result['target_count'], 120)
+        self.assertAlmostEqual(result['percentage_diff'], 20.0)
+        self.assertEqual(result['threshold'], 10.0)
+        self.assertIn('exceeds threshold', result['message'])
+    
+    def test_validate_document_count_difference_empty_target(self):
+        """Test document count validation when target index is empty."""
+        # Mock _get_index_count to return values with empty target
+        self.manager._get_index_count = MagicMock(side_effect=[100, 0])
+        
+        result = self.manager._validate_document_count_difference('source-index', 'target-index')
+        
+        # Verify result
+        self.assertEqual(result['status'], 'error')
+        self.assertIn("Target index is empty", result['message'])
+        
+        # Verify _get_index_count was called with correct arguments
+        self.manager._get_index_count.assert_any_call('source-index')
+        self.manager._get_index_count.assert_any_call('target-index')
+    
+    def test_validate_document_count_difference_zero_source(self):
+        """Test document count validation when source index is empty."""
+        # Mock _get_index_count to return values with empty source
+        self.manager._get_index_count = MagicMock(side_effect=[0, 50])
+        
+        result = self.manager._validate_document_count_difference('source-index', 'target-index')
+        
+        # Verify result
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['source_count'], 0)
+        self.assertEqual(result['target_count'], 50)
+        self.assertEqual(result['percentage_diff'], 100.0)
+    
+    def test_validate_document_count_difference_both_empty(self):
+        """Test document count validation when both indices are empty."""
+        # Mock _get_index_count to return values with both empty
+        self.manager._get_index_count = MagicMock(side_effect=[0, 0])
+        
+        result = self.manager._validate_document_count_difference('source-index', 'target-index')
+        
+        # Verify result
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['source_count'], 0)
+        self.assertEqual(result['target_count'], 0)
+        self.assertEqual(result['percentage_diff'], 0.0)
+    
+    def test_validate_document_count_difference_default_threshold(self):
+        """Test document count validation with default threshold."""
+        # Mock _get_index_count to return specific values
+        self.manager._get_index_count = MagicMock(side_effect=[100, 105])
+        
+        # Remove DOCUMENT_COUNT_THRESHOLD from environment to use default
+        with patch.dict('os.environ', {}, clear=True):
+            result = self.manager._validate_document_count_difference('source-index', 'target-index')
+        
+        # Verify result
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['source_count'], 100)
+        self.assertEqual(result['target_count'], 105)
+        self.assertAlmostEqual(result['percentage_diff'], 5.0)
+        self.assertEqual(result['threshold'], 10.0)  # Default value
+    
+    def test_validate_document_count_difference_exception(self):
+        """Test document count validation when an exception occurs."""
+        # Mock _get_index_count to raise an exception
+        self.manager._get_index_count = MagicMock(side_effect=Exception("Test exception"))
+        
+        result = self.manager._validate_document_count_difference('source-index', 'target-index')
+        
+        # Verify result
+        self.assertEqual(result['status'], 'error')
+        self.assertIn("Error validating document count difference", result['message'])
+        self.assertIn("Test exception", result['message'])
+    
+    def test_validate_document_count_difference_custom_threshold(self):
+        """Test document count validation with custom threshold."""
+        # Mock _get_index_count to return specific values
+        self.manager._get_index_count = MagicMock(side_effect=[100, 110])
+        
+        # Set threshold to 5%
+        with patch.dict('os.environ', {'DOCUMENT_COUNT_THRESHOLD': '5'}):
+            result = self.manager._validate_document_count_difference('source-index', 'target-index')
+        
+        # Verify result
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['source_count'], 100)
+        self.assertEqual(result['target_count'], 110)
+        self.assertAlmostEqual(result['percentage_diff'], 10.0)
+        self.assertEqual(result['threshold'], 5.0)
+        self.assertIn('exceeds threshold', result['message'])
+    
+    def test_validate_document_count_difference_negative_difference(self):
+        """Test document count validation with negative difference (target has fewer documents)."""
+        # Mock _get_index_count to return values with target having fewer documents
+        self.manager._get_index_count = MagicMock(side_effect=[100, 90])
+        
+        # Set threshold to 10%
+        with patch.dict('os.environ', {'DOCUMENT_COUNT_THRESHOLD': '10'}):
+            result = self.manager._validate_document_count_difference('source-index', 'target-index')
+        
+        # Verify result
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['source_count'], 100)
+        self.assertEqual(result['target_count'], 90)
+        self.assertAlmostEqual(result['percentage_diff'], 10.0)
+        self.assertEqual(result['threshold'], 10.0)
+    
+    def test_validate_document_count_difference_large_numbers(self):
+        """Test document count validation with large document counts."""
+        # Mock _get_index_count to return large values
+        self.manager._get_index_count = MagicMock(side_effect=[1000000, 1050000])
+        
+        # Set threshold to 10%
+        with patch.dict('os.environ', {'DOCUMENT_COUNT_THRESHOLD': '10'}):
+            result = self.manager._validate_document_count_difference('source-index', 'target-index')
+        
+        # Verify result
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['source_count'], 1000000)
+        self.assertEqual(result['target_count'], 1050000)
+        self.assertAlmostEqual(result['percentage_diff'], 5.0)
+        self.assertEqual(result['threshold'], 10.0)
 
 if __name__ == '__main__':
     unittest.main() 

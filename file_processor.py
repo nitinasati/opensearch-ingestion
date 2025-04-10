@@ -46,14 +46,24 @@ class FileProcessor:
         self._processed_count_from_bulk = 0
         self._lock = threading.Lock()
         self.opensearch_manager = OpenSearchBaseManager()
-        self.sqs_client = boto3.client('sqs')
         
-        # Get SQS queue ARN from environment variable
-        self.sqs_dlq_arn = os.getenv('SQS-DLQ-ARN')
-        if not self.sqs_dlq_arn:
-            logger.warning("SQS-DLQ-ARN environment variable not set. Error reporting to SQS will be disabled.")
+        # Check if DLQ is enabled
+        self.dlq_enabled = os.getenv('DLQ', 'disabled').lower() == 'enabled'
+        
+        # Initialize SQS client only if DLQ is enabled
+        if self.dlq_enabled:
+            self.sqs_client = boto3.client('sqs')
+            # Get SQS queue ARN from environment variable
+            self.sqs_dlq_arn = os.getenv('SQS-DLQ-ARN')
+            if not self.sqs_dlq_arn:
+                logger.warning("SQS-DLQ-ARN environment variable not set. Error reporting to SQS will be disabled.")
+                self.dlq_enabled = False
+            else:
+                logger.info(f"Using SQS DLQ ARN: {self.sqs_dlq_arn}")
         else:
-            logger.info(f"Using SQS DLQ ARN: {self.sqs_dlq_arn}")
+            self.sqs_client = None
+            self.sqs_dlq_arn = None
+            logger.info("DLQ is disabled. Error reporting to SQS will be skipped.")
             
         logger.info(f"Initialized FileProcessor with batch_size: {batch_size}, max_workers: {max_workers}")
 
@@ -260,13 +270,13 @@ class FileProcessor:
         Returns:
             bool: True if message was sent successfully, False otherwise
         """
-        # Check if SQS ARN is configured
-        if not self.sqs_dlq_arn:
-            logger.warning("SQS-DLQ-ARN not configured. Skipping error reporting to SQS.")
+        # Check if DLQ is enabled and SQS ARN is configured
+        if not self.dlq_enabled or not self.sqs_dlq_arn:
+            logger.warning("DLQ is disabled or SQS-DLQ-ARN not configured. Skipping error reporting to SQS.")
             return False
             
         try:
-            # Extract queue URL from ARN
+            # Extract queue name from ARN
             # Format: arn:aws:sqs:region:account-id:queue-name
             arn_parts = self.sqs_dlq_arn.split(':')
             if len(arn_parts) < 6:
@@ -274,11 +284,19 @@ class FileProcessor:
                 return False
                 
             region = arn_parts[3]
-            account_id = arn_parts[4]
             queue_name = arn_parts[5]
             
-            # Get queue URL
-            queue_url = f"https://sqs.{region}.amazonaws.com/{account_id}/{queue_name}"
+            # Log the extracted parts for debugging
+            logger.info(f"Extracted SQS ARN parts - Region: {region}, Queue Name: {queue_name}")
+            
+            # Get queue URL using AWS SDK
+            try:
+                queue_url_response = self.sqs_client.get_queue_url(QueueName=queue_name)
+                queue_url = queue_url_response['QueueUrl']
+                logger.info(f"Retrieved SQS queue URL: {queue_url}")
+            except Exception as e:
+                logger.error(f"Failed to get queue URL: {str(e)}")
+                return False
             
             # Add timestamp to the payload
             error_payload['timestamp'] = datetime.now().isoformat()
@@ -358,6 +376,8 @@ class FileProcessor:
                 
         except Exception as e:
             logger.error(f"Failed to send error message to SQS: {str(e)}")
+            # Log the full ARN for debugging
+            logger.error(f"SQS DLQ ARN: {self.sqs_dlq_arn}")
             return False
 
     def _print_error_records(self, failed_records: List[Dict[str, Any]], file_key: str) -> None:
