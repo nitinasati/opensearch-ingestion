@@ -16,24 +16,48 @@ class TestOpenSearchIndexManager(unittest.TestCase):
     
     def setUp(self):
         """Set up test environment."""
-        # Disable logging during tests
-        logging.disable(logging.CRITICAL)
+        # Create mock for OpenSearch connection
+        self.opensearch_mock = MagicMock()
+        self.opensearch_mock.info.return_value = {'version': {'number': '7.10.2'}}
+        self.opensearch_mock.indices.exists.return_value = True
+        self.opensearch_mock.indices.get.return_value = {'test-index': {'mappings': {}}}
+        self.opensearch_mock.indices.stats.return_value = {'indices': {'test-index': {'total': {'docs': {'count': 0}}}}}
+        self.opensearch_mock.indices.delete.return_value = {'acknowledged': True}
+        self.opensearch_mock.indices.create.return_value = {'acknowledged': True}
+        self.opensearch_mock.indices.put_mapping.return_value = {'acknowledged': True}
+        self.opensearch_mock.indices.put_settings.return_value = {'acknowledged': True}
+        
+        # Create mock for requests
+        self.requests_mock = MagicMock()
+        self.requests_mock.get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {'version': {'number': '7.10.2'}}
+        )
+        self.requests_mock.get.return_value.raise_for_status = MagicMock()
         
         # Create mock for OpenSearchBaseManager
         self.manager_mock = MagicMock()
+        self.manager_mock.opensearch = self.opensearch_mock
+        self.manager_mock.opensearch_endpoint = 'https://dummy-opensearch-endpoint'
         
         # Apply patches
-        self.manager_patcher = patch('index_cleanup.OpenSearchBaseManager', return_value=self.manager_mock)
+        self.opensearch_patcher = patch('opensearchpy.OpenSearch', return_value=self.opensearch_mock)
+        self.requests_patcher = patch('requests.get', return_value=self.requests_mock.get.return_value)
+        self.manager_patcher = patch('opensearch_base_manager.OpenSearchBaseManager', return_value=self.manager_mock)
+        
+        self.opensearch_patcher.start()
+        self.requests_patcher.start()
         self.manager_patcher.start()
         
-        # Create an instance of OpenSearchIndexManager
+        # Initialize the index manager
         self.index_manager = OpenSearchIndexManager()
+        self.index_manager.opensearch_manager = self.manager_mock
     
     def tearDown(self):
         """Clean up after tests."""
+        self.opensearch_patcher.stop()
+        self.requests_patcher.stop()
         self.manager_patcher.stop()
-        # Re-enable logging
-        logging.disable(logging.NOTSET)
     
     def test_init(self):
         """Test initialization of the OpenSearchIndexManager class."""

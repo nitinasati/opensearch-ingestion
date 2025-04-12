@@ -21,9 +21,30 @@ class TestFileProcessor(unittest.TestCase):
         # Create a mock for boto3.client
         self.s3_client_mock = MagicMock()
         
+        # Create mock for OpenSearch connection
+        self.opensearch_mock = MagicMock()
+        self.opensearch_mock.info.return_value = {'version': {'number': '7.10.2'}}
+        self.opensearch_mock.indices.exists.return_value = True
+        self.opensearch_mock.indices.get.return_value = {'test-index': {'mappings': {}}}
+        self.opensearch_mock.indices.stats.return_value = {'indices': {'test-index': {'total': {'docs': {'count': 0}}}}}
+        self.opensearch_mock.bulk.return_value = {'errors': False, 'items': []}
+        
+        # Create mock for requests
+        self.requests_mock = MagicMock()
+        self.requests_mock.get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {'version': {'number': '7.10.2'}}
+        )
+        self.requests_mock.get.return_value.raise_for_status = MagicMock()
+        
         # Apply patches
         self.boto3_patcher = patch('boto3.client', return_value=self.s3_client_mock)
+        self.opensearch_patcher = patch('opensearchpy.OpenSearch', return_value=self.opensearch_mock)
+        self.requests_patcher = patch('requests.get', return_value=self.requests_mock.get.return_value)
+        
         self.boto3_patcher.start()
+        self.opensearch_patcher.start()
+        self.requests_patcher.start()
         
         # Initialize the processor
         self.processor = FileProcessor(batch_size=5, max_workers=2)
@@ -33,10 +54,15 @@ class TestFileProcessor(unittest.TestCase):
             'status': 'success',
             'response': MagicMock(json=lambda: {'errors': False, 'items': []})
         })
+        
+        # Set the OpenSearch endpoint to a dummy value since we're mocking
+        self.processor.opensearch_manager.opensearch_endpoint = 'https://dummy-opensearch-endpoint'
     
     def tearDown(self):
         """Clean up after tests."""
         self.boto3_patcher.stop()
+        self.opensearch_patcher.stop()
+        self.requests_patcher.stop()
     
     def test_init(self):
         """Test initialization of the FileProcessor class."""
@@ -450,6 +476,106 @@ class TestFileProcessor(unittest.TestCase):
             self.assertEqual(batch[2]['id'], 3)
             self.assertEqual(batch[2]['name'], 'test3')
             self.assertEqual(batch[2]['value'], '300')  # CSV values are read as strings
+
+    def test_process_json_file_success(self):
+        """Test successful JSON file processing with multiple records."""
+        # Create test JSON content with multiple records
+        json_content = '[{"id": 1, "name": "test1"}, {"id": 2, "name": "test2"}, {"id": 3, "name": "test3"}]'
+        
+        # Mock the batch queue to verify documents are added
+        with patch.object(self.processor, '_batch_queue') as mock_queue:
+            # Mock the OpenSearch bulk response
+            self.opensearch_mock.bulk.return_value = {
+                'errors': False,
+                'items': [
+                    {'index': {'status': 200, '_id': '1'}},
+                    {'index': {'status': 200, '_id': '2'}},
+                    {'index': {'status': 200, '_id': '3'}}
+                ]
+            }
+            
+            # Process the JSON content
+            row_count = self.processor._process_json_file(json_content, 'test.json')
+            
+            # Verify the row count
+            self.assertEqual(row_count, 3)
+            
+            # Verify that documents were added to the queue
+            mock_queue.put.assert_called_once()
+            batch = mock_queue.put.call_args[0][0]
+            self.assertEqual(len(batch), 3)
+            
+            # Verify document content
+            self.assertEqual(batch[0]['id'], 1)
+            self.assertEqual(batch[0]['name'], 'test1')
+            self.assertEqual(batch[1]['id'], 2)
+            self.assertEqual(batch[1]['name'], 'test2')
+            self.assertEqual(batch[2]['id'], 3)
+            self.assertEqual(batch[2]['name'], 'test3')
+
+    def test_process_json_file_single_object(self):
+        """Test JSON file processing with a single object."""
+        # Create test JSON content with a single object
+        json_content = '{"id": 1, "name": "test1"}'
+        
+        # Mock the batch queue to verify documents are added
+        with patch.object(self.processor, '_batch_queue') as mock_queue:
+            # Mock the OpenSearch bulk response
+            self.opensearch_mock.bulk.return_value = {
+                'errors': False,
+                'items': [{'index': {'status': 200, '_id': '1'}}]
+            }
+            
+            # Process the JSON content
+            row_count = self.processor._process_json_file(json_content, 'test.json')
+            
+            # Verify the row count
+            self.assertEqual(row_count, 1)
+            
+            # Verify that documents were added to the queue
+            mock_queue.put.assert_called_once()
+            batch = mock_queue.put.call_args[0][0]
+            self.assertEqual(len(batch), 1)
+            
+            # Verify document content
+            self.assertEqual(batch[0]['id'], 1)
+            self.assertEqual(batch[0]['name'], 'test1')
+
+    def test_process_json_file_error_handling(self):
+        """Test JSON file processing with invalid data."""
+        # Create test JSON content with invalid data
+        json_content = '[{"id": 1, "name": "test1"}, {"id": "invalid", "name": 123}, {"id": 3, "name": "test3"}]'
+        
+        # Mock the batch queue to verify documents are added
+        with patch.object(self.processor, '_batch_queue') as mock_queue:
+            # Mock the OpenSearch bulk response with some errors
+            self.opensearch_mock.bulk.return_value = {
+                'errors': True,
+                'items': [
+                    {'index': {'status': 200, '_id': '1'}},
+                    {'index': {'status': 400, 'error': {'type': 'mapper_parsing_exception', 'reason': 'Invalid id'}}},
+                    {'index': {'status': 200, '_id': '3'}}
+                ]
+            }
+            
+            # Process the JSON content
+            row_count = self.processor._process_json_file(json_content, 'test.json')
+            
+            # Verify the row count (should still count all rows)
+            self.assertEqual(row_count, 3)
+            
+            # Verify that documents were added to the queue
+            mock_queue.put.assert_called_once()
+            batch = mock_queue.put.call_args[0][0]
+            self.assertEqual(len(batch), 3)
+            
+            # Verify document content (all values should be preserved as is)
+            self.assertEqual(batch[0]['id'], 1)
+            self.assertEqual(batch[0]['name'], 'test1')
+            self.assertEqual(batch[1]['id'], 'invalid')
+            self.assertEqual(batch[1]['name'], 123)
+            self.assertEqual(batch[2]['id'], 3)
+            self.assertEqual(batch[2]['name'], 'test3')
 
 if __name__ == '__main__':
     unittest.main() 
