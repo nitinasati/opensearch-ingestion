@@ -438,9 +438,9 @@ class FileProcessor:
                 
             # Only try to access response.json() if status is success
             response = result['response'].json()
+            failed_records = []
             if response.get('errors', False):
                 # Extract failed records
-                failed_records = []
                 for i, item in enumerate(response.get('items', [])):
                     index_result = item.get('index', {})
                     if index_result.get('status', 200) >= 400:  # Error status codes are 400 and above
@@ -455,10 +455,10 @@ class FileProcessor:
                 # Print error records using the dedicated function
                 if failed_records:
                     self._print_error_records(failed_records, file_key)
-                return False
+                
 
             if 'items' in response:
-                processed_count = len(response['items'])
+                processed_count = len(response['items']) - len(failed_records)
                 logger.info(f"Processed {processed_count} records from bulk request for file {file_key}")
             
             # Update processed count with the actual count from the response

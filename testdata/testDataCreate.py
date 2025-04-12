@@ -24,13 +24,14 @@ def generate_csv_data(num_records=100, filename="testdata/member_data.csv"):
     os.makedirs(os.path.dirname(filename), exist_ok=True)
 
     with open(filename, "w", newline="", encoding="utf-8") as csvfile:
-        fieldnames = ["memberId", "groupId", "firstName", "lastName", "middleName", "addressLine1", "addressLine2", "city", "state", "zipcode", "country", "phoneNumber1", "phoneNumber2", "email1", "email2", "objectId", "objectName", "subjectId", "subjectName", "fatherName", "motherName", "dateOfBirth", "gender", "maritalStatus", "employmentStatus", "policyNumber", "coverageStartDate", "coverageEndDate", "memberStatus", "preferredLanguage", "createdAt", "updatedAt"]
+        fieldnames = ["id", "memberId", "groupId", "firstName", "lastName", "middleName", "addressLine1", "addressLine2", "city", "state", "zipcode", "country", "phoneNumber1", "phoneNumber2", "email1", "email2", "objectId", "objectName", "subjectId", "subjectName", "fatherName", "motherName", "dateOfBirth", "gender", "maritalStatus", "employmentStatus", "policyNumber", "coverageStartDate", "coverageEndDate", "memberStatus", "preferredLanguage", "createdAt", "updatedAt"]
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
         writer.writeheader()
 
-        for _ in range(num_records):
-            print(f"Generating record {_} of {num_records}")    
+        for i in range(num_records):
+            print(f"Generating record {i} of {num_records}")    
+            id = str(uuid.uuid4())  # Generate UUID for id field
             member_id = str(uuid.uuid4())
             group_id = str(uuid.uuid4())
             first_name = random.choice(first_names)
@@ -66,6 +67,7 @@ def generate_csv_data(num_records=100, filename="testdata/member_data.csv"):
             updated_at = datetime.now().isoformat()
 
             record = {
+                "id": id,  # Use UUID for id field
                 "memberId": member_id,
                 "groupId": group_id,
                 "firstName": first_name,
@@ -131,10 +133,10 @@ def generate_json_data(num_records=100, filename="testdata/member_data.json", si
     if single_file:
         # Generate a single JSON file with an array of records
         records = []
-        for _ in range(num_records):
-            print(f"Generating record {_} of {num_records}")
+        for i in range(num_records):
+            print(f"Generating record {i} of {num_records}")
             record = generate_record(first_names, last_names, middle_names, cities, states, countries, 
-                                    genders, marital_statuses, employment_statuses, member_statuses, languages)
+                                    genders, marital_statuses, employment_statuses, member_statuses, languages, i)
             records.append(record)
         
         with open(filename, "w", encoding="utf-8") as jsonfile:
@@ -143,13 +145,13 @@ def generate_json_data(num_records=100, filename="testdata/member_data.json", si
         print(f"Generated {num_records} records and saved to {filename}")
     else:
         # Generate multiple JSON files with one record each
-        for _ in range(num_records):
-            print(f"Generating record {_} of {num_records}")
+        for i in range(num_records):
+            print(f"Generating record {i} of {num_records}")
             record = generate_record(first_names, last_names, middle_names, cities, states, countries, 
-                                    genders, marital_statuses, employment_statuses, member_statuses, languages)
+                                    genders, marital_statuses, employment_statuses, member_statuses, languages, i)
             
             # Create a filename with the record index
-            record_filename = f"{os.path.splitext(filename)[0]}_{_+1}.json"
+            record_filename = f"{os.path.splitext(filename)[0]}_{i+1}.json"
             
             with open(record_filename, "w", encoding="utf-8") as jsonfile:
                 json.dump(record, jsonfile, indent=2)
@@ -157,8 +159,9 @@ def generate_json_data(num_records=100, filename="testdata/member_data.json", si
         print(f"Generated {num_records} individual JSON files in {os.path.dirname(filename)}")
 
 def generate_record(first_names, last_names, middle_names, cities, states, countries, 
-                   genders, marital_statuses, employment_statuses, member_statuses, languages):
+                   genders, marital_statuses, employment_statuses, member_statuses, languages, record_index):
     """Helper function to generate a single record with the given data."""
+    id = str(uuid.uuid4())  # Generate UUID for id field
     member_id = str(uuid.uuid4())
     group_id = str(uuid.uuid4())
     first_name = random.choice(first_names)
@@ -194,6 +197,7 @@ def generate_record(first_names, last_names, middle_names, cities, states, count
     updated_at = datetime.now().isoformat()
 
     return {
+        "id": id,  # Use UUID for id field
         "memberId": member_id,
         "groupId": group_id,
         "firstName": first_name,
