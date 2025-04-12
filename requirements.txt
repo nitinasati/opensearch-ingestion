@@ -12,4 +12,5 @@ tqdm>=4.66.0
 typing-extensions>=4.7.0
 pytest-mock>=3.14.0
 pytest-asyncio>=0.21.0
+flask>=3.0.0
 

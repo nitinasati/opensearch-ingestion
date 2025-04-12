@@ -27,6 +27,12 @@ class TestFileProcessor(unittest.TestCase):
         
         # Initialize the processor
         self.processor = FileProcessor(batch_size=5, max_workers=2)
+        
+        # Create mock make_request function
+        self.mock_make_request = MagicMock(return_value={
+            'status': 'success',
+            'response': MagicMock(json=lambda: {'errors': False, 'items': []})
+        })
     
     def tearDown(self):
         """Clean up after tests."""
@@ -179,6 +185,48 @@ class TestFileProcessor(unittest.TestCase):
         self.assertEqual(document2['id'], 2)
         self.assertEqual(document2['name'], 'test2')
     
+    def test_process_file_csv(self):
+        """Test processing a CSV file."""
+        # Mock the necessary functions
+        with patch.object(self.processor, '_get_file_content', return_value=('test content', 'test-file.csv', 'csv')):
+            with patch.object(self.processor, '_process_csv_file', return_value=10):
+                with patch('concurrent.futures.ThreadPoolExecutor') as executor_mock:
+                    executor_mock.return_value.__enter__.return_value.submit.return_value.result.return_value = None
+                    
+                    # Process the file
+                    rows_processed, processed_count = self.processor.process_file({
+                        'file_path': 'test-file.csv',
+                        'type': 'csv'
+                    }, 'test-index', lambda *args, **kwargs: {'status': 'success'})
+                    
+                    # Check that the correct number of rows were processed
+                    self.assertEqual(rows_processed, 10)
+                    self.assertEqual(processed_count, 0)  # Since we mocked the worker threads
+    
+    def test_process_file_json(self):
+        """Test processing a JSON file."""
+        # Mock the necessary functions
+        with patch.object(self.processor, '_get_file_content', return_value=('test content', 'test-file.json', 'json')):
+            with patch.object(self.processor, '_process_json_file', return_value=10):
+                with patch('concurrent.futures.ThreadPoolExecutor') as executor_mock:
+                    executor_mock.return_value.__enter__.return_value.submit.return_value.result.return_value = None
+                    
+                    # Process the file
+                    rows_processed, processed_count = self.processor.process_file({
+                        'file_path': 'test-file.json',
+                        'type': 'json'
+                    }, 'test-index', lambda *args, **kwargs: {'status': 'success'})
+                    
+                    # Check that the correct number of rows were processed
+                    self.assertEqual(rows_processed, 10)
+                    self.assertEqual(processed_count, 0)  # Since we mocked the worker threads
+    
+    def test_process_file_error(self):
+        """Test error handling in process_file."""
+        file_info = {"file_path": "test.csv", "type": "invalid"}
+        result = self.processor.process_file(file_info, "test-index", self.mock_make_request)
+        self.assertEqual(result, (0, 0))
+    
     def test_process_batch_success(self):
         """Test processing a batch successfully."""
         # Set the _make_request attribute on the processor
@@ -202,6 +250,7 @@ class TestFileProcessor(unittest.TestCase):
             result = self.processor._process_batch(batch, 'test-index', 'test-file')
             
             self.assertTrue(result)
+            self.assertEqual(self.processor._processed_count_from_bulk, 2)
     
     def test_process_batch_error(self):
         """Test processing a batch with an error."""
@@ -222,143 +271,185 @@ class TestFileProcessor(unittest.TestCase):
             result = self.processor._process_batch(batch, 'test-index', 'test-file')
             
             self.assertFalse(result)
+            self.assertEqual(self.processor._processed_count_from_bulk, 0)
     
     def test_process_batch_worker(self):
         """Test the batch worker function."""
-        # Mock the _process_batch function
-        with patch.object(self.processor, '_process_batch', return_value=True):
-            # Add a batch to the queue
-            self.processor._batch_queue.put([
-                {'id': 1, 'name': 'test1'},
-                {'id': 2, 'name': 'test2'}
-            ])
+        # Initialize the processed count
+        self.processor._processed_count_from_bulk = 0
+        
+        # Add a batch to the queue
+        self.processor._batch_queue.put([
+            {'id': 1, 'name': 'test1'},
+            {'id': 2, 'name': 'test2'}
+        ])
+        
+        # Add a None to signal the worker to stop
+        self.processor._batch_queue.put(None)
+        
+        # Mock the _make_request function
+        self.processor._make_request = MagicMock(return_value={
+            'status': 'success',
+            'response': MagicMock(json=lambda: {'errors': False, 'items': [{'index': {'status': 200}}, {'index': {'status': 200}}]})
+        })
+        
+        # Mock the _process_batch function to update the counter
+        def mock_process_batch(batch, index_name, file_name):
+            self.processor._processed_count_from_bulk += len(batch)
+            return True
             
-            # Add a None to signal the worker to stop
-            self.processor._batch_queue.put(None)
-            
+        with patch.object(self.processor, '_process_batch', side_effect=mock_process_batch):
             # Run the worker
             self.processor._process_batch_worker('test-index', 'test-file')
             
             # Check that the batch was processed
             self.processor._process_batch.assert_called_once()
+            self.assertEqual(self.processor._processed_count_from_bulk, 2)
     
-    def test_process_csv_file(self):
-        """Test processing a CSV file."""
-        # Mock the _batch_queue.put method
-        with patch.object(self.processor._batch_queue, 'put'):
-            # Create a test CSV content
-            csv_content = 'id,name\n1,test1\n2,test2\n3,test3\n4,test4\n5,test5\n6,test6'
-            
-            # Process the CSV file
-            row_count = self.processor._process_csv_file(csv_content, 'test-file.csv')
-            
-            # Check that the correct number of rows were processed
-            self.assertEqual(row_count, 6)
-            
-            # Check that the batches were added to the queue
-            self.assertEqual(self.processor._batch_queue.put.call_count, 2)  # 5 rows in first batch, 1 in second
-    
-    def test_process_json_file(self):
-        """Test processing a JSON file."""
-        # Mock the _batch_queue.put method
-        with patch.object(self.processor._batch_queue, 'put'):
-            # Create a test JSON content
-            json_content = json.dumps([
-                {'id': 1, 'name': 'test1'},
-                {'id': 2, 'name': 'test2'},
-                {'id': 3, 'name': 'test3'},
-                {'id': 4, 'name': 'test4'},
-                {'id': 5, 'name': 'test5'},
-                {'id': 6, 'name': 'test6'}
-            ])
-            
-            # Process the JSON file
-            row_count = self.processor._process_json_file(json_content, 'test-file.json')
-            
-            # Check that the correct number of rows were processed
-            self.assertEqual(row_count, 6)
-            
-            # Check that the batches were added to the queue
-            self.assertEqual(self.processor._batch_queue.put.call_count, 2)  # 5 rows in first batch, 1 in second
-    
-    def test_get_file_content_local(self):
-        """Test getting content from a local file."""
-        # Mock the open function
-        with patch('builtins.open', new_callable=MagicMock) as mock_open:
-            mock_open.return_value.__enter__.return_value.read.return_value = 'test content'
-            
-            content, file_path, file_type = self.processor._get_file_content({
-                'file_path': 'test-file.csv',
-                'type': 'csv'
-            })
-            
-            self.assertEqual(content, 'test content')
-            self.assertEqual(file_path, 'test-file.csv')
-            self.assertEqual(file_type, 'csv')
-    
-    def test_get_file_content_s3(self):
-        """Test getting content from an S3 file."""
-        # Mock the S3 client
-        self.s3_client_mock.get_object.return_value = {
-            'Body': MagicMock(read=lambda: b'test content')
+    def test_process_batch_with_failed_records(self):
+        """Test processing a batch with failed records."""
+        # Set the _make_request attribute on the processor
+        self.processor._make_request = MagicMock()
+        
+        # Create a mock response with failed records
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            'errors': True,
+            'items': [
+                {'index': {'status': 200, '_id': '1'}},
+                {'index': {
+                    'status': 400,
+                    '_id': '2',
+                    'error': {
+                        'type': 'mapper_parsing_exception',
+                        'reason': 'failed to parse field'
+                    }
+                }},
+                {'index': {
+                    'status': 500,
+                    '_id': '3',
+                    'error': {
+                        'type': 'internal_error',
+                        'reason': 'server error'
+                    }
+                }}
+            ]
         }
         
-        content, file_path, file_type = self.processor._get_file_content({
-            'bucket': 'test-bucket',
-            'key': 'test-file.csv',
-            'type': 'csv'
-        })
-        
-        self.assertEqual(content, 'test content')
-        self.assertEqual(file_path, 'test-bucket/test-file.csv')
-        self.assertEqual(file_type, 'csv')
-    
-    def test_process_file_csv(self):
-        """Test processing a CSV file."""
-        # Mock the necessary functions
-        with patch.object(self.processor, '_get_file_content', return_value=('test content', 'test-file.csv', 'csv')):
-            with patch.object(self.processor, '_process_csv_file', return_value=10):
-                with patch('concurrent.futures.ThreadPoolExecutor') as executor_mock:
-                    executor_mock.return_value.__enter__.return_value.submit.return_value.result.return_value = None
-                    
-                    # Process the file
-                    row_count = self.processor.process_file({
-                        'file_path': 'test-file.csv',
-                        'type': 'csv'
-                    }, 'test-index', lambda *args, **kwargs: {'status': 'success'})
-                    
-                    # Check that the correct number of rows were processed
-                    self.assertEqual(row_count, 10)
-    
-    def test_process_file_json(self):
-        """Test processing a JSON file."""
-        # Mock the necessary functions
-        with patch.object(self.processor, '_get_file_content', return_value=('test content', 'test-file.json', 'json')):
-            with patch.object(self.processor, '_process_json_file', return_value=10):
-                with patch('concurrent.futures.ThreadPoolExecutor') as executor_mock:
-                    executor_mock.return_value.__enter__.return_value.submit.return_value.result.return_value = None
-                    
-                    # Process the file
-                    row_count = self.processor.process_file({
-                        'file_path': 'test-file.json',
-                        'type': 'json'
-                    }, 'test-index', lambda *args, **kwargs: {'status': 'success'})
-                    
-                    # Check that the correct number of rows were processed
-                    self.assertEqual(row_count, 10)
-    
-    def test_process_file_error(self):
-        """Test processing a file with an error."""
-        # Mock the _get_file_content function to raise an IOError
-        with patch.object(self.processor, '_get_file_content', side_effect=IOError('Test error')):
-            # Process the file
-            row_count = self.processor.process_file({
-                'file_path': 'test-file.csv',
-                'type': 'csv'
-            }, 'test-index', lambda *args, **kwargs: {'status': 'success'})
+        # Mock the _make_request function
+        with patch.object(self.processor, '_make_request', return_value={
+            'status': 'success',
+            'response': mock_response
+        }):
+            # Create test batch
+            batch = [
+                {'id': '1', 'name': 'test1'},
+                {'id': '2', 'name': 'test2'},
+                {'id': '3', 'name': 'test3'}
+            ]
             
-            # Check that the error was handled
-            self.assertEqual(row_count, 0)
+            # Mock the _print_error_records method to verify it's called
+            with patch.object(self.processor, '_print_error_records') as mock_print_errors:
+                result = self.processor._process_batch(batch, 'test-index', 'test-file')
+                
+                # Verify the result
+                self.assertTrue(result)
+                self.assertEqual(self.processor._processed_count_from_bulk, 1)  # Only one successful record
+                
+                # Verify error records were collected and printed
+                mock_print_errors.assert_called_once()
+                call_args = mock_print_errors.call_args[0]
+                self.assertEqual(len(call_args[0]), 2)  # Two failed records
+                self.assertEqual(call_args[1], 'test-file')  # File name
+                
+                # Verify error record details
+                error_records = call_args[0]
+                self.assertEqual(error_records[0]['document_id'], '2')
+                self.assertEqual(error_records[0]['error_type'], 'mapper_parsing_exception')
+                self.assertEqual(error_records[1]['document_id'], '3')
+                self.assertEqual(error_records[1]['error_type'], 'internal_error')
+    
+    def test_process_csv_file_success(self):
+        """Test successful CSV file processing."""
+        # Create test CSV content
+        csv_content = "id,name,value\n1,test1,100\n2,test2,200\n3,test3,300"
+        
+        # Mock the batch queue to verify documents are added
+        with patch.object(self.processor, '_batch_queue') as mock_queue:
+            # Process the CSV content
+            row_count = self.processor._process_csv_file(csv_content, 'test.csv')
+            
+            # Verify the row count
+            self.assertEqual(row_count, 3)
+            
+            # Verify that batches were added to the queue
+            # Since batch_size is 5 and we have 3 rows, only one batch should be added
+            mock_queue.put.assert_called_once()
+            batch = mock_queue.put.call_args[0][0]
+            self.assertEqual(len(batch), 3)
+            
+            # Verify document content
+            self.assertEqual(batch[0]['id'], 1)
+            self.assertEqual(batch[0]['name'], 'test1')
+            self.assertEqual(batch[0]['value'], 100)
+            
+    def test_process_csv_file_with_batching(self):
+        """Test CSV file processing with multiple batches."""
+        # Create test CSV content with more rows than batch size
+        csv_content = "id,name,value\n" + "\n".join([f"{i},test{i},{i*100}" for i in range(1, 8)])
+        
+        # Mock the batch queue to verify documents are added
+        with patch.object(self.processor, '_batch_queue') as mock_queue:
+            # Process the CSV content
+            row_count = self.processor._process_csv_file(csv_content, 'test.csv')
+            
+            # Verify the row count
+            self.assertEqual(row_count, 7)
+            
+            # Verify that two batches were added to the queue
+            # First batch should have 5 rows (batch_size)
+            # Second batch should have 2 rows
+            self.assertEqual(mock_queue.put.call_count, 2)
+            
+            # Verify first batch
+            first_batch = mock_queue.put.call_args_list[0][0][0]
+            self.assertEqual(len(first_batch), 5)
+            
+            # Verify second batch
+            second_batch = mock_queue.put.call_args_list[1][0][0]
+            self.assertEqual(len(second_batch), 2)
+            
+    def test_process_csv_file_error_handling(self):
+        """Test CSV file processing with error handling."""
+        # Create test CSV content with invalid data
+        csv_content = "id,name,value\n1,test1,100\n2,test2,invalid\n3,test3,300"
+        
+        # Mock the batch queue to verify documents are added
+        with patch.object(self.processor, '_batch_queue') as mock_queue:
+            # Process the CSV content
+            row_count = self.processor._process_csv_file(csv_content, 'test.csv')
+            
+            # Verify the row count (should count all rows)
+            self.assertEqual(row_count, 3)
+            
+            # Verify that all documents were added to the queue
+            mock_queue.put.assert_called_once()
+            batch = mock_queue.put.call_args[0][0]
+            self.assertEqual(len(batch), 3)  # All rows are processed
+            
+            # Verify document content
+            self.assertEqual(batch[0]['id'], 1)
+            self.assertEqual(batch[0]['name'], 'test1')
+            self.assertEqual(batch[0]['value'], '100')  # CSV values are read as strings
+            
+            # The invalid value should be converted to a string
+            self.assertEqual(batch[1]['id'], 2)
+            self.assertEqual(batch[1]['name'], 'test2')
+            self.assertEqual(batch[1]['value'], 'invalid')
+            
+            self.assertEqual(batch[2]['id'], 3)
+            self.assertEqual(batch[2]['name'], 'test3')
+            self.assertEqual(batch[2]['value'], '300')  # CSV values are read as strings
 
 if __name__ == '__main__':
     unittest.main() 

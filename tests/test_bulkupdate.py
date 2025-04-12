@@ -105,35 +105,25 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
     
     def test_verify_document_count_success(self):
         """Test successful document count verification."""
-        # Mock a successful count response
-        count_response = MagicMock()
-        count_response.status_code = 200
-        count_response.json.return_value = {'count': 42}
-        self.requests_mock.post.return_value = count_response
-        
         # Mock the _processed_count_from_bulk attribute
-        self.file_processor_mock._processed_count_from_bulk = 42
+        self.manager.file_processor._processed_count_from_bulk = 42
         
-        result = self.manager._verify_document_count('test-index', 42)
+        result = self.manager._verify_document_count(42, 42, False)
+        
         self.assertEqual(result['status'], 'success')
-        self.assertEqual(result['message'], 'Document count verification successful: 42 documents match expected count')
+        self.assertEqual(result['message'], 'Document count verification successful: 42 new documents match expected count')
         self.assertEqual(result['actual_count'], 42)
         self.assertEqual(result['expected_count'], 42)
     
     def test_verify_document_count_mismatch(self):
         """Test document count verification with a mismatch."""
-        # Mock a successful count response with a different count
-        count_response = MagicMock()
-        count_response.status_code = 200
-        count_response.json.return_value = {'count': 40}
-        self.requests_mock.post.return_value = count_response
-        
         # Mock the _processed_count_from_bulk attribute
-        self.file_processor_mock._processed_count_from_bulk = 40
+        self.manager.file_processor._processed_count_from_bulk = 40
         
-        result = self.manager._verify_document_count('test-index', 42)
+        result = self.manager._verify_document_count(42, 40, False)
+        
         self.assertEqual(result['status'], 'error')
-        self.assertEqual(result['message'], 'Document count mismatch: Expected 42, got 40')
+        self.assertEqual(result['message'], 'Document count mismatch: Expected 42 new documents, got 40')
         self.assertEqual(result['actual_count'], 40)
         self.assertEqual(result['expected_count'], 42)
     
@@ -142,7 +132,7 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
         # Set the expected new documents count on the mock file_processor
         self.manager.file_processor._processed_count_from_bulk = 50
         
-        result = self.manager._verify_document_count('test-index', 50, resume=True)
+        result = self.manager._verify_document_count(50, 50, True)
         
         self.assertEqual(result['status'], 'success')
         self.assertEqual(result['message'], 'Document count verification successful: 50 new documents match expected count')
@@ -153,20 +143,15 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
     def test_verify_document_count_resume_mismatch(self):
         """Test document count verification mismatch in resume mode."""
         # Set a different processed count on the mock file_processor
-        processed_count_attr = '_processed_count_from_bulk'
-        setattr(self.manager.file_processor, processed_count_attr, 45)
+        self.manager.file_processor._processed_count_from_bulk = 45
         
-        result = self.manager._verify_document_count('test-index', 50, resume=True)
+        result = self.manager._verify_document_count(50, 45, True)
         
-        self.assertEqual(result['status'], 'error') # Should be error on mismatch
+        self.assertEqual(result['status'], 'error')
         self.assertEqual(result['message'], 'Document count mismatch: Expected 50 new documents, got 45')
         self.assertEqual(result['expected_count'], 50)
         self.assertEqual(result['actual_count'], 45)
         self.assertEqual(result['documents_indexed'], 45)
-
-        # Clean up the attribute set on the mock
-        if hasattr(self.manager.file_processor, processed_count_attr):
-            delattr(self.manager.file_processor, processed_count_attr)
 
     def test_get_processed_files(self):
         """Test getting processed files."""
@@ -274,7 +259,7 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
     def test_process_files(self):
         """Test processing files."""
         # Mock the file processor
-        self.file_processor_mock.process_file.return_value = 10
+        self.file_processor_mock.process_file.return_value = (10, 10)  # Return tuple of (rows_processed, processed_count)
         
         # Create test files
         all_files = [
@@ -284,10 +269,11 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
         
         # Mock the processed files
         with patch.object(self.manager, '_get_processed_files', return_value=[]):
-            total_rows, total_files = self.manager._process_files(all_files, 'test-index')
+            total_rows, total_files, total_processed = self.manager._process_files(all_files, 'test-index', False)
             
             self.assertEqual(total_rows, 20)  # 10 rows per file
             self.assertEqual(total_files, 2)
+            self.assertEqual(total_processed, 20)  # 10 processed per file
             
             # Check that the file processor was called for each file
             self.assertEqual(self.file_processor_mock.process_file.call_count, 2)
@@ -404,16 +390,18 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
             # Create test data
             total_rows = 42
             total_files = 2
+            total_processed_count_from_bulk = 42
             start_time = datetime.now()
-            
+
             # Verify results
-            result = self.manager._verify_results('test-index', total_rows, total_files, start_time, False, 0)
+            result = self.manager._verify_results(total_rows, total_files, total_processed_count_from_bulk, start_time, False)
             
-            # Check that the result contains the expected fields
+            # Check the result
             self.assertEqual(result['status'], 'success')
+            self.assertEqual(result['total_rows_processed'], total_rows)
+            self.assertEqual(result['total_files_processed'], total_files)
+            self.assertEqual(result['expected_documents'], 42)
             self.assertEqual(result['actual_documents'], 42)
-            self.assertEqual(result['total_files_processed'], 2)
-            self.assertIn('total_time_seconds', result)
     
     def test_verify_results_error(self):
         """Test verifying results with an error."""
@@ -422,10 +410,11 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
             # Create test data
             total_rows = 42
             total_files = 2
+            total_processed_count_from_bulk = 42
             start_time = datetime.now()
             
             # Verify results
-            result = self.manager._verify_results('test-index', total_rows, total_files, start_time, False, 0)
+            result = self.manager._verify_results(total_rows, total_files, total_processed_count_from_bulk, start_time, False)
             
             # Check that the result contains the expected fields
             self.assertEqual(result['status'], 'error')
@@ -467,13 +456,15 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
             {'file_path': 'file1.csv', 'type': 'csv'},
             {'file_path': 'file2.json', 'type': 'json'}
         ]):
-            with patch.object(self.manager, '_process_files', return_value=(42, 2)):
+            with patch.object(self.manager, '_process_files', return_value=(42, 2, 42)):
                 with patch.object(self.manager, '_verify_results', return_value={
                     'status': 'success',
                     'message': 'Ingestion completed successfully',
-                    'total_documents': 42,
-                    'total_files': 2,
-                    'processing_time': 1.0
+                    'total_rows_processed': 42,
+                    'total_files_processed': 2,
+                    'actual_documents': 42,
+                    'expected_documents': 42,
+                    'total_time_seconds': 1.0
                 }):
                     # Ingest data
                     result = self.manager.ingest_data(local_folder='test-folder', index_name='test-index')
@@ -481,9 +472,9 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
                     # Check that the result contains the expected fields
                     self.assertEqual(result['status'], 'success')
                     self.assertEqual(result['message'], 'Ingestion completed successfully')
-                    self.assertEqual(result['total_documents'], 42)
-                    self.assertEqual(result['total_files'], 2)
-                    self.assertIn('processing_time', result)
+                    self.assertEqual(result['total_rows_processed'], 42)
+                    self.assertEqual(result['total_files_processed'], 2)
+                    self.assertIn('total_time_seconds', result)
     
     def test_ingest_data_s3_success(self):
         """Test successful ingestion from S3."""
@@ -491,7 +482,7 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
         self.manager._process_s3_source = MagicMock(return_value=[
             {"bucket": "test-bucket", "key": "test-file.csv", "type": "csv"}
         ])
-        self.manager._process_files = MagicMock(return_value=(200, 2))
+        self.manager._process_files = MagicMock(return_value=(200, 2, 200))
         self.manager._verify_results = MagicMock(return_value={
             'status': 'success',
             'message': 'Successfully ingested data',
@@ -522,7 +513,7 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
     def test_ingest_data_local_files_success(self):
         """Test successful ingestion from local files."""
         # Mock the necessary methods
-        self.manager._process_files = MagicMock(return_value=(150, 2))
+        self.manager._process_files = MagicMock(return_value=(150, 2, 150))
         self.manager._verify_results = MagicMock(return_value={
             'status': 'success',
             'message': 'Successfully ingested data',
@@ -582,12 +573,15 @@ class TestOpenSearchBulkIngestion(unittest.TestCase):
         self.manager._process_s3_source = MagicMock(return_value=[
             {"bucket": "test-bucket", "key": "test-file.csv", "type": "csv"}
         ])
-        self.manager._process_files = MagicMock(return_value=(200, 2))
+        self.manager._process_files = MagicMock(return_value=(200, 2, 150))
         self.manager._verify_results = MagicMock(return_value={
             'status': 'error',
             'message': 'Document count verification failed',
+            'total_rows_processed': 200,
+            'total_files_processed': 2,
             'expected_documents': 200,
-            'actual_documents': 150
+            'actual_documents': 150,
+            'total_time_seconds': 1.5
         })
         
         # Call ingest_data method

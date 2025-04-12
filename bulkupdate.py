@@ -89,7 +89,7 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
         
         logger.info(f"Initialized OpenSearchBulkIngestion with batch_size: {batch_size}, max_workers: {max_workers}")
 
-    def _verify_document_count(self, index_name: str, expected_count: int, resume: bool = False, initial_count: int = 0) -> Dict[str, Any]:
+    def _verify_document_count(self, total_rows_from_file: int, total_processed_count_from_bulk: int, resume: bool = False) -> Dict[str, Any]:
         """
         Verify that the document count matches the expected count.
         
@@ -102,75 +102,37 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
         Returns:
             dict: Verification result containing status and details
         """
-        # In resume mode, we need to track the initial count and verify the difference
-        if resume:
-            # In resume mode, we verify the difference between final and initial count
-            try:
-                # Use the processed count from the FileProcessor
-                new_documents = self.file_processor._processed_count_from_bulk
-                logger.info(f"Document count verification (resume mode) - Expected new documents: {expected_count}, Actual new documents: {new_documents}")
-                
-                if new_documents == expected_count:
-                    logger.info(f"Document count verification successful: {new_documents} new documents match expected count")
-                    return {
-                        "status": "success",
-                        "message": f"Document count verification successful: {new_documents} new documents match expected count",
-                        "expected_count": expected_count,
-                        "actual_count": new_documents,
-                        "documents_indexed": new_documents
-                    }
-                else:
-                    logger.warning(f"Document count mismatch: Expected {expected_count} new documents, got {new_documents}")
-                    return {
-                        "status": "error",
-                        "message": f"Document count mismatch: Expected {expected_count} new documents, got {new_documents}",
-                        "expected_count": expected_count,
-                        "actual_count": new_documents,
-                        "documents_indexed": new_documents
-                    }
-            except Exception as e:
-                logger.error(f"Error verifying document count: {str(e)}")
+        try:
+            # Use the processed count from the FileProcessor
+            logger.info(f"Document count verification - Expected new documents: {total_rows_from_file}, Actual new documents: {total_processed_count_from_bulk}")
+            
+            if total_rows_from_file == total_processed_count_from_bulk:
+                logger.info(f"Document count verification successful: {total_rows_from_file} new documents match expected count")
+                return {
+                    "status": "success",
+                    "message": f"Document count verification successful: {total_rows_from_file} new documents match expected count",
+                    "expected_count": total_rows_from_file,
+                    "actual_count": total_processed_count_from_bulk,
+                    "documents_indexed": total_processed_count_from_bulk
+                }
+            else:
+                logger.warning(f"Document count mismatch: Expected {total_rows_from_file} new documents, got {total_processed_count_from_bulk}")
                 return {
                     "status": "error",
-                    "message": f"Error verifying document count: {str(e)}",
-                    "expected_count": expected_count,
-                    "actual_count": 0,
-                    "documents_indexed": 0
+                    "message": f"Document count mismatch: Expected {total_rows_from_file} new documents, got {total_processed_count_from_bulk}",
+                    "expected_count": total_rows_from_file,
+                    "actual_count": total_processed_count_from_bulk,
+                    "documents_indexed": total_processed_count_from_bulk
                 }
-        else:
-            # In fresh load mode, we verify the total count
-            try:
-                # Use the processed count from the FileProcessor
-                actual_count = self.file_processor._processed_count_from_bulk
-                logger.info(f"Document count verification - Expected: {expected_count}, Actual: {actual_count}")
-                
-                if actual_count == expected_count:
-                    logger.info(f"Document count verification successful: {actual_count} documents match expected count")
-                    return {
-                        "status": "success",
-                        "message": f"Document count verification successful: {actual_count} documents match expected count",
-                        "expected_count": expected_count,
-                        "actual_count": actual_count,
-                        "documents_indexed": actual_count
-                    }
-                else:
-                    logger.warning(f"Document count mismatch: Expected {expected_count}, got {actual_count}")
-                    return {
-                        "status": "error",
-                        "message": f"Document count mismatch: Expected {expected_count}, got {actual_count}",
-                        "expected_count": expected_count,
-                        "actual_count": actual_count,
-                        "documents_indexed": actual_count
-                    }
-            except Exception as e:
-                logger.error(f"Error verifying document count: {str(e)}")
-                return {
-                    "status": "error",
-                    "message": f"Error verifying document count: {str(e)}",
-                    "expected_count": expected_count,
-                    "actual_count": 0,
-                    "documents_indexed": 0
-                }
+        except Exception as e:
+            logger.error(f"Error verifying document count: {str(e)}")
+            return {
+                "status": "error",
+                "message": f"Error verifying document count: {str(e)}",
+                "expected_count": total_rows_from_file,
+                "actual_count": 0,
+                "documents_indexed": 0
+            }
 
     def _get_processed_files(self, index_name: str) -> List[str]:
         """
@@ -281,70 +243,116 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             return "csv"
         return "unknown"
         
-    def _process_files(self, all_files: List[Dict[str, Any]], index_name: str, resume: bool = False) -> Tuple[int, int]:
-        """
-        Process a list of files and return total rows and files processed.
-        
-        Args:
-            all_files (List[Dict[str, Any]]): List of files to process
-            index_name (str): Target index name
-            resume (bool): Whether to resume processing from previously processed files
+    def _process_file_info(self, file_info: Dict[str, Any], index_name: str, processed_files: List[str], resume: bool) -> Tuple[int, int, Dict[str, Any]]:
+        """Process a single file and return its results."""
+        if isinstance(file_info, str):
+            file_identifier = file_info
+            file_info_dict = {
+                "file_path": file_info,
+                "type": self._determine_file_type(file_info)
+            }
+        else:
+            file_identifier = self._get_file_identifier(file_info)
+            file_info_dict = file_info
             
-        Returns:
-            Tuple[int, int]: (total_rows, total_files)
+        if resume and file_identifier in processed_files:
+            logger.info(f"Skipping already processed file: {file_identifier}")
+            return 0, 0, None
             
-        Raises:
-            OpenSearchException: If there's an error processing any file
-        """
-        total_rows_from_file = 0
-        total_files = 0
-        
+        try:
+            rows_processed_from_file, processed_count_from_bulk = self.file_processor.process_file(file_info_dict, index_name, self._make_request)
+            
+            # Determine status based on processing results
+            if rows_processed_from_file == processed_count_from_bulk and rows_processed_from_file > 0:
+                status = "success"
+            elif processed_count_from_bulk == 0 or rows_processed_from_file == 0:
+                status = "failed"
+            else:
+                status = "partial"
+                
+            file_result = {
+                "file_name": file_identifier,
+                "total_rows": rows_processed_from_file,
+                "processed_rows": processed_count_from_bulk,
+                "status": status
+            }
+            return rows_processed_from_file, processed_count_from_bulk, file_result
+        except Exception as e:
+            logger.error(f"Error processing file {file_identifier}: {str(e)}")
+            return 0, 0, {
+                "file_name": file_identifier,
+                "total_rows": 0,
+                "processed_rows": 0,
+                "status": "error",
+                "error": str(e)
+            }
+
+    def _process_files(self, all_files: List[Dict[str, Any]], index_name: str, resume: bool = False) -> Tuple[int, int, int]:
+        """Process a list of files and return total rows and files processed."""
         if not all_files:
             logger.warning(NO_FILES_MESSAGE)
-            return total_rows_from_file, total_files
+            return 0, 0, 0
             
         logger.info(f"Processing {len(all_files)} files in total")
+        processed_files = self._get_processed_files(index_name) if resume else []
         
-        # Get list of already processed files if resuming
-        processed_files = []
-        if resume:
-            processed_files = self._get_processed_files(index_name)
-            logger.info(f"Found {len(processed_files)} previously processed files")
-            
+        total_rows_from_file = 0
+        total_processed_count_from_bulk = 0
+        total_files = 0
+        file_processing_results = []
+        
         for file_info in all_files:
-            # Handle both string and dictionary file_info formats
-            if isinstance(file_info, str):
-                file_identifier = file_info
-                file_info_dict = {
-                    "file_path": file_info,
-                    "type": self._determine_file_type(file_info)
-                }
-            else:
-                file_identifier = self._get_file_identifier(file_info)
-                file_info_dict = file_info
-                
-            # Skip if file was already processed and we're in resume mode
-            if resume and file_identifier in processed_files:
-                logger.info(f"Skipping already processed file: {file_identifier}")
-                continue
-                
-            try:
+            rows_processed, processed_count, file_result = self._process_file_info(file_info, index_name, processed_files, resume)
+            if file_result:
                 total_files += 1
-                rows_processed_from_file = self.file_processor.process_file(file_info_dict, index_name, self._make_request)
-                total_rows_from_file += rows_processed_from_file
-                with self._lock:
-                    self._processed_count += rows_processed_from_file
-                logger.info(f"Processed {rows_processed_from_file} rows from {file_identifier}")
+                total_rows_from_file += rows_processed
+                total_processed_count_from_bulk += processed_count
+                file_processing_results.append(file_result)
                 
-                # Update tracking file with successfully processed file
-                self._update_processed_files(index_name, file_identifier)
+                if rows_processed == processed_count and rows_processed > 0:
+                    logger.info(f"{file_result['file_name']} processed successfully with {rows_processed} rows")
+                    self._update_processed_files(index_name, file_result['file_name'])
+                elif processed_count == 0 or rows_processed == 0:
+                    logger.error(f"{file_result['file_name']} failed to process any rows")
+                else:
+                    logger.warning(f"{file_result['file_name']} processed with error {processed_count} out of {rows_processed} rows processed successfully")
                     
-            except Exception as e:
-                logger.error(f"Error processing file {file_identifier}: {str(e)}")
-                raise OpenSearchException(f"Error processing file {file_identifier}: {str(e)}")
-                
-        return total_rows_from_file, total_files
+        self._generate_summary_report(file_processing_results)
+        return total_rows_from_file, total_files, total_processed_count_from_bulk
+
+    def _generate_summary_report(self, file_results: List[Dict[str, Any]]) -> None:
+        """
+        Generate a summary report of file processing results.
         
+        Args:
+            file_results (List[Dict[str, Any]]): List of file processing results
+        """
+        logger.info("== Processing Summary Report ===")
+        logger.info(f"{'File Name':<30} {'Total Rows':<12} {'Processed Rows':<15} {'Status':<10}")
+        logger.info("-" * 70)
+        
+        for result in file_results:
+            # Extract just the filename from the path
+            file_name = os.path.basename(result['file_name'])
+            logger.info(f"{file_name:<30} {result['total_rows']:<12} {result['processed_rows']:<15} {result['status']:<10}")
+            
+        # Calculate totals
+        total_files = len(file_results)
+        total_rows = sum(r['total_rows'] for r in file_results)
+        total_processed = sum(r['processed_rows'] for r in file_results)
+        success_files = sum(1 for r in file_results if r['status'] == 'success')
+        partial_files = sum(1 for r in file_results if r['status'] == 'partial')
+        error_files = sum(1 for r in file_results if r['status'] == 'failed')
+        
+        logger.info("-" * 70)
+        logger.info(f"Total Files: {total_files}")
+        logger.info(f"Successfully Processed Files: {success_files}")
+        logger.info(f"Partially Processed Files: {partial_files}")
+        logger.info(f"Failed Files: {error_files}")
+        logger.info(f"Total Rows: {total_rows}")
+        logger.info(f"Successfully Processed Rows: {total_processed}")
+        logger.info("=== End of Summary Report ===\n")
+
     def _process_local_sources(self, local_folder, local_files):
         """Process local folder and files, return list of files to process."""
         all_files = []
@@ -440,14 +448,14 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             "total_time_seconds": round(total_time, 2)
         }
     
-    def _verify_results(self, index_name, total_rows, total_files, start_time, resume, initial_count):
+    def _verify_results(self,total_rows_from_file, total_files, total_processed_count_from_bulk, start_time, resume):
         """Verify document count and return results."""
         try:
-            verification_result = self._verify_document_count(index_name, self._processed_count, resume, initial_count)
-            return self._format_verification_result(verification_result, total_rows, total_files, start_time)
+            verification_result = self._verify_document_count(total_rows_from_file, total_processed_count_from_bulk, resume)
+            return self._format_verification_result(verification_result, total_rows_from_file, total_files, start_time)
             
         except Exception as e:
-            return self._handle_verification_error(e, total_rows, total_files, start_time)
+            return self._handle_verification_error(e, total_rows_from_file, total_files, start_time)
 
     def ingest_data(self, bucket: Optional[str] = None, prefix: Optional[str] = None, 
                     local_files: Optional[List[str]] = None, local_folder: Optional[str] = None,
@@ -522,13 +530,12 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             else:
                 logger.info("Resume mode enabled - skipping index cleanup to preserve existing data")
                 
-            # Get initial count 
-            initial_count = 0
+          
             # Process all files
-            total_rows, total_files = self._process_files(all_files, index_name, resume)
+            total_rows_from_file, total_files, total_processed_count_from_bulk = self._process_files(all_files, index_name, resume)
             
             # Verify results
-            return self._verify_results(index_name, total_rows, total_files, start_time, resume, initial_count)
+            return self._verify_results(total_rows_from_file, total_files, total_processed_count_from_bulk, start_time, resume)
             
         except Exception as e:
             error_msg = f"Error during data ingestion: {str(e)}"

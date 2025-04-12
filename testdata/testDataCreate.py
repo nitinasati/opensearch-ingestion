@@ -54,7 +54,7 @@ def generate_csv_data(num_records=100, filename="testdata/member_data.csv"):
             father_name = f"{random.choice(first_names)} {random.choice(last_names)}"
             mother_name = f"{random.choice(first_names)} {random.choice(last_names)}"
             start_date = datetime.now() - timedelta(days=random.randint(365 * 18, 365 * 60))
-            date_of_birth = start_date.strftime("%Y-%m-%d")
+            date_of_birth = ""
             gender = random.choice(genders)
             marital_status = random.choice(marital_statuses)
             employment_status = random.choice(employment_statuses)
@@ -184,7 +184,7 @@ def generate_record(first_names, last_names, middle_names, cities, states, count
     father_name = f"{random.choice(first_names)} {random.choice(last_names)}"
     mother_name = f"{random.choice(first_names)} {random.choice(last_names)}"
     start_date = datetime.now() - timedelta(days=random.randint(365 * 18, 365 * 60))
-    date_of_birth = start_date.strftime("%Y-%m-%d")
+    date_of_birth = ""
     gender = random.choice(genders)
     marital_status = random.choice(marital_statuses)
     employment_status = random.choice(employment_statuses)
