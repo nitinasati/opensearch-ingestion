@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unicorn Member Search</title>
+    <link rel="stylesheet" href="https://code.jquery.com/ui/1.12.1/themes/base/jquery-ui.css">
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.11.5/css/jquery.dataTables.min.css">
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.11.5/css/dataTables.jqueryui.min.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .search-container {
+            margin-bottom: 20px;
+        }
+        .search-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .search-field {
+            flex: 1;
+            min-width: 200px;
+        }
+        .search-field label {
+            display: block;
+            margin-bottom: 5px;
+            color: #666;
+        }
+        .search-field input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .search-button {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .search-button button {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 0 5px;
+        }
+        .search-button button:hover {
+            background-color: #45a049;
+        }
+        #reset-btn {
+            background-color: #f44336;
+        }
+        #reset-btn:hover {
+            background-color: #d32f2f;
+        }
+        .ui-autocomplete {
+            max-height: 200px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            z-index: 1000;
+        }
+        .ui-menu-item {
+            padding: 5px;
+            cursor: pointer;
+        }
+        .ui-menu-item:hover {
+            background-color: #f0f0f0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Unicorn Member Search</h1>
+        
+        <div class="search-container">
+            <div class="search-row">
+                <div class="search-field">
+                    <label for="global-search">Quick Search (Auto-complete)</label>
+                    <input type="text" id="global-search" placeholder="Enter at least 3 characters...">
+                </div>
+            </div>
+            
+            <div class="search-row">
+                <div class="search-field">
+                    <label for="memberId">Member ID</label>
+                    <input type="text" id="memberId">
+                </div>
+                <div class="search-field">
+                    <label for="firstName">First Name</label>
+                    <input type="text" id="firstName">
+                </div>
+                <div class="search-field">
+                    <label for="lastName">Last Name</label>
+                    <input type="text" id="lastName">
+                </div>
+            </div>
+            
+            <div class="search-row">
+                <div class="search-field">
+                    <label for="memberStatus">Member Status</label>
+                    <input type="text" id="memberStatus">
+                </div>
+                <div class="search-field">
+                    <label for="state">State</label>
+                    <input type="text" id="state">
+                </div>
+                <div class="search-field">
+                    <label for="fatherName">Father's Name</label>
+                    <input type="text" id="fatherName">
+                </div>
+            </div>
+            
+            <div class="search-row">
+                <div class="search-field">
+                    <label for="email1">Email</label>
+                    <input type="text" id="email1">
+                </div>
+            </div>
+            
+            <div class="search-button">
+                <button id="search-btn">Search</button>
+                <button id="reset-btn">Reset</button>
+            </div>
+        </div>
+        
+        <table id="results-table" class="display">
+            <thead>
+                <tr>
+                    <th>Member ID</th>
+                    <th>First Name</th>
+                    <th>Last Name</th>
+                    <th>Member Status</th>
+                    <th>State</th>
+                    <th>Father's Name</th>
+                    <th>Email</th>
+                </tr>
+            </thead>
+        </table>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://code.jquery.com/ui/1.12.1/jquery-ui.min.js"></script>
+    <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.11.5/js/dataTables.jqueryui.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            let dataTable = $('#results-table').DataTable({
+                columns: [
+                    { data: 'memberId' },
+                    { data: 'firstName' },
+                    { data: 'lastName' },
+                    { data: 'memberStatus' },
+                    { data: 'state' },
+                    { data: 'fatherName' },
+                    { data: 'email1' }
+                ],
+                pageLength: 10,
+                order: [[1, 'asc']],
+                language: {
+                    emptyTable: "No records found. Please perform a search."
+                }
+            });
+
+            $('#global-search').autocomplete({
+                source: function(request, response) {
+                    if (request.term.length >= 3) {
+                        console.log("Autocomplete request for: " + request.term);
+                        $.ajax({
+                            url: '/api/autocomplete',
+                            method: 'GET',
+                            data: { query: request.term },
+                            success: function(data) {
+                                console.log("Autocomplete response:", data);
+                                if (Array.isArray(data)) {
+                                    response(data);
+                                } else if (data.error) {
+                                    console.error("Autocomplete error:", data.error);
+                                    response([]);
+                                } else {
+                                    console.error("Invalid autocomplete response format:", data);
+                                    response([]);
+                                }
+                            },
+                            error: function(xhr, status, error) {
+                                console.error("Autocomplete error:", error);
+                                console.error("Status:", status);
+                                console.error("Response:", xhr.responseText);
+                                response([]);
+                            }
+                        });
+                    } else {
+                        response([]);
+                    }
+                },
+                minLength: 3,
+                select: function(event, ui) {
+                    console.log("Selected item:", ui.item);
+                    $('#memberId').val(ui.item.memberId);
+                    $('#firstName').val(ui.item.firstName);
+                    $('#lastName').val(ui.item.lastName);
+                    $('#memberStatus').val(ui.item.memberStatus);
+                    $('#state').val(ui.item.state);
+                    return false;
+                }
+            }).data("ui-autocomplete")._renderItem = function(ul, item) {
+                return $("<li>")
+                    .append("<div>" + item.label + "</div>")
+                    .appendTo(ul);
+            };
+
+            $('#search-btn').click(function() {
+                const searchData = {
+                    memberId: $('#memberId').val(),
+                    firstName: $('#firstName').val(),
+                    lastName: $('#lastName').val(),
+                    memberStatus: $('#memberStatus').val(),
+                    state: $('#state').val(),
+                    fatherName: $('#fatherName').val(),
+                    email1: $('#email1').val()
+                };
+
+                $.ajax({
+                    url: '/api/search',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify(searchData),
+                    success: function(response) {
+                        const hits = response.hits.hits.map(hit => hit._source);
+                        dataTable.clear().rows.add(hits).draw();
+                    },
+                    error: function(xhr, status, error) {
+                        alert('Error performing search: ' + error);
+                    }
+                });
+            });
+
+            // Add reset button functionality
+            $('#reset-btn').click(function() {
+                // Clear all input fields
+                $('#global-search').val('');
+                $('#memberId').val('');
+                $('#firstName').val('');
+                $('#lastName').val('');
+                $('#memberStatus').val('');
+                $('#state').val('');
+                $('#fatherName').val('');
+                $('#email1').val('');
+                
+                // Reload default data
+                loadDefaultData();
+            });
+
+            // Load default data when the page loads
+            function loadDefaultData() {
+                $.ajax({
+                    url: '/api/default-search',
+                    method: 'GET',
+                    success: function(response) {
+                        if (response.hits && response.hits.hits) {
+                            const hits = response.hits.hits.map(hit => hit._source);
+                            dataTable.clear().rows.add(hits).draw();
+                        } else {
+                            console.error("Invalid response format:", response);
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        console.error("Error loading default data:", error);
+                    }
+                });
+            }
+            
+            // Call the function to load default data
+            loadDefaultData();
+        });
+    </script>
+</body>
+</html> 

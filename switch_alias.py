@@ -203,10 +203,7 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
                 }
             
             # Calculate percentage difference
-            if source_count > 0:
-                percentage_diff = abs((target_count - source_count) / source_count) * 100
-            else:
-                percentage_diff = 0 if target_count == 0 else 100
+            percentage_diff = abs((target_count - source_count) / source_count) * 100
             
             # Check if difference exceeds threshold
             if percentage_diff > threshold:
@@ -221,7 +218,7 @@ class OpenSearchAliasManager(OpenSearchBaseManager):
                     "threshold": threshold
                 }
             
-            success_msg = "Document count validation passed"
+            success_msg = f"Document count difference ({percentage_diff:.2f}%) is within threshold ({threshold}%)"
             logger.info(success_msg)
             return {
                 "status": "success",

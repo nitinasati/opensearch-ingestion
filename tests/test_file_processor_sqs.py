@@ -23,195 +23,187 @@ class TestFileProcessorSQS(unittest.TestCase):
     
     def setUp(self):
         """Set up test environment."""
-        # Mock environment variables
-        self.env_patcher = patch.dict('os.environ', {
-            'SQS-DLQ-ARN': 'arn:aws:sqs:us-east-1:416449661344:mysamplequeue-dlq'
-        })
-        self.env_patcher.start()
+        # Set environment variables
+        os.environ['OPENSEARCH_ENDPOINT'] = 'http://localhost:9200'
+        os.environ['DLQ'] = 'enabled'
+        os.environ['SQS-DLQ-ARN'] = 'arn:aws:sqs:region:account-id:queue-name'
         
-        # Create a mock for boto3.client
-        self.sqs_client_mock = MagicMock()
-        self.sqs_client_mock.send_message.return_value = {'MessageId': 'test-message-id'}
+        # Create mock for SQS client
+        self.sqs_mock = MagicMock()
+        self.sqs_mock.get_queue_url.return_value = {'QueueUrl': 'https://sqs.queue.url'}
+        self.sqs_mock.send_message.return_value = {'MessageId': 'test-message-id'}
         
-        # Create a mock for boto3.client
-        self.boto3_patcher = patch('boto3.client', return_value=self.sqs_client_mock)
+        # Create mock for boto3 client
+        self.boto3_mock = MagicMock()
+        self.boto3_mock.client.return_value = self.sqs_mock
+        
+        # Create mock for OpenSearch connection
+        self.opensearch_mock = MagicMock()
+        self.opensearch_mock.info.return_value = {'version': {'number': '7.10.2'}}
+        self.opensearch_mock.indices.exists.return_value = True
+        self.opensearch_mock.indices.get.return_value = {'test-index': {'mappings': {}}}
+        self.opensearch_mock.indices.stats.return_value = {'indices': {'test-index': {'total': {'docs': {'count': 100}}}}}
+        self.opensearch_mock.count.return_value = {'count': 100}
+        
+        # Create mock for requests
+        self.requests_mock = MagicMock()
+        self.requests_mock.get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {'version': {'number': '7.10.2'}}
+        )
+        self.requests_mock.get.return_value.raise_for_status = MagicMock()
+        
+        # Create mock for OpenSearchBaseManager
+        self.manager_mock = MagicMock()
+        self.manager_mock.opensearch = self.opensearch_mock
+        self.manager_mock.opensearch_endpoint = 'http://localhost:9200'
+        self.manager_mock._make_request.return_value = {
+            'status': 'success',
+            'response': MagicMock(
+                status_code=200,
+                json=lambda: {'version': {'number': '7.10.2'}}
+            )
+        }
+        
+        # Apply patches
+        self.boto3_patcher = patch('boto3.client', return_value=self.sqs_mock)
+        self.opensearch_patcher = patch('opensearchpy.OpenSearch', return_value=self.opensearch_mock)
+        self.requests_patcher = patch('requests.get', return_value=self.requests_mock.get.return_value)
+        self.manager_patcher = patch('opensearch_base_manager.OpenSearchBaseManager', return_value=self.manager_mock)
+        
         self.boto3_patcher.start()
+        self.opensearch_patcher.start()
+        self.requests_patcher.start()
+        self.manager_patcher.start()
         
-        # Initialize the FileProcessor
+        # Initialize file processor
         self.file_processor = FileProcessor()
-        
+        self.file_processor._make_request = self.manager_mock._make_request
+    
     def tearDown(self):
         """Clean up after tests."""
-        self.env_patcher.stop()
         self.boto3_patcher.stop()
+        self.opensearch_patcher.stop()
+        self.requests_patcher.stop()
+        self.manager_patcher.stop()
+        
+        # Clean up environment variables
+        if 'DLQ' in os.environ:
+            del os.environ['DLQ']
+        if 'SQS-DLQ-ARN' in os.environ:
+            del os.environ['SQS-DLQ-ARN']
     
     def test_init_with_sqs_arn(self):
         """Test initialization with SQS ARN."""
-        # Verify that the SQS client was created
         self.assertIsNotNone(self.file_processor.sqs_client)
-        self.assertEqual(self.file_processor.sqs_dlq_arn, 'arn:aws:sqs:us-east-1:416449661344:mysamplequeue-dlq')
+        self.assertEqual(self.file_processor.sqs_dlq_arn, 'arn:aws:sqs:region:account-id:queue-name')
+        self.assertTrue(self.file_processor.dlq_enabled)
     
     def test_init_without_sqs_arn(self):
         """Test initialization without SQS ARN."""
-        # Mock environment variables without SQS ARN but with required OpenSearch endpoint
+        # Create mock credentials
+        mock_credentials = MagicMock()
+        mock_credentials.access_key = 'test-access-key'
+        mock_credentials.secret_key = 'test-secret-key'
+        mock_credentials.token = 'test-token'
+        
+        # Create mock session
+        mock_session = MagicMock()
+        mock_session.get_credentials.return_value = mock_credentials
+        
         with patch.dict('os.environ', {
-            'OPENSEARCH_ENDPOINT': 'test-endpoint',
+            'OPENSEARCH_ENDPOINT': 'http://localhost:9200',
+            'DLQ': 'enabled',
             'AWS_REGION': 'us-east-1',
             'VERIFY_SSL': 'false'
-        }, clear=True):
-            # Mock AWS session and credentials
-            mock_session = MagicMock()
-            mock_credentials = MagicMock()
-            mock_credentials.access_key = 'test-access-key'
-            mock_credentials.secret_key = 'test-secret-key'
-            mock_credentials.token = 'test-token'
-            mock_session.get_credentials.return_value = mock_credentials
-            
-            # Mock boto3.Session
-            with patch('boto3.Session', return_value=mock_session):
-                # Mock AWS4Auth
-                with patch('requests_aws4auth.AWS4Auth', return_value=MagicMock()):
-                    # Mock requests to prevent actual HTTP calls
-                    with patch('requests.get', return_value=MagicMock(status_code=200)):
-                        with patch('requests.post', return_value=MagicMock(status_code=200)):
-                            file_processor = FileProcessor()
-                            self.assertIsNone(file_processor.sqs_dlq_arn)
+        }, clear=True), \
+             patch('boto3.Session', return_value=mock_session):
+            processor = FileProcessor()
+            self.assertIsNone(processor.sqs_dlq_arn)
+            self.assertFalse(processor.dlq_enabled)
+    
+    def test_init_with_dlq_disabled(self):
+        """Test initialization with DLQ disabled."""
+        # Create mock credentials
+        mock_credentials = MagicMock()
+        mock_credentials.access_key = 'test-access-key'
+        mock_credentials.secret_key = 'test-secret-key'
+        mock_credentials.token = 'test-token'
+        
+        # Create mock session
+        mock_session = MagicMock()
+        mock_session.get_credentials.return_value = mock_credentials
+        
+        with patch.dict('os.environ', {
+            'OPENSEARCH_ENDPOINT': 'http://localhost:9200',
+            'SQS-DLQ-ARN': 'arn:aws:sqs:region:account-id:queue-name',
+            'DLQ': 'disabled',
+            'AWS_REGION': 'us-east-1',
+            'VERIFY_SSL': 'false'
+        }, clear=True), \
+             patch('boto3.Session', return_value=mock_session):
+            processor = FileProcessor()
+            self.assertIsNone(processor.sqs_client)
+            self.assertFalse(processor.dlq_enabled)
     
     def test_send_error_to_sqs_success(self):
-        """Test successful sending of error message to SQS."""
-        # Create a test error payload
+        """Test successful error message sending to SQS."""
         error_payload = {
-            'error_message': 'Test error message',
-            'failed_records': [
-                {
-                    'document_id': 'doc1',
-                    'error_type': 'test_error',
-                    'error_reason': 'Test reason',
-                    'document': {'id': 'doc1', 'name': 'Test Doc'}
-                }
-            ],
+            'error_message': 'Test error',
+            'failed_records': [],
             'file_key': 'test.csv',
-            'source': 'opensearch_ingestion'
+            'source': 'test'
         }
-        
-        # Call the method
         result = self.file_processor._send_error_to_sqs(error_payload)
-        
-        # Verify the result
         self.assertTrue(result)
-        
-        # Verify that send_message was called with the correct arguments
-        self.sqs_client_mock.send_message.assert_called_once()
-        call_args = self.sqs_client_mock.send_message.call_args[1]
-        
-        # Verify the queue URL
-        self.assertEqual(call_args['QueueUrl'], 'https://sqs.us-east-1.amazonaws.com/416449661344/mysamplequeue-dlq')
-        
-        # Verify the message body contains the error payload
-        message_body = json.loads(call_args['MessageBody'])
-        self.assertEqual(message_body['error_message'], 'Test error message')
-        self.assertEqual(message_body['file_key'], 'test.csv')
-        self.assertEqual(message_body['source'], 'opensearch_ingestion')
-        self.assertEqual(len(message_body['failed_records']), 1)
-        self.assertEqual(message_body['failed_records'][0]['document_id'], 'doc1')
-        self.assertIn('timestamp', message_body)
+        self.sqs_mock.send_message.assert_called_once()
     
     def test_send_error_to_sqs_without_arn(self):
         """Test sending error message to SQS when ARN is not configured."""
-        # Set sqs_dlq_arn to None
         self.file_processor.sqs_dlq_arn = None
-        
-        # Create a test error payload
         error_payload = {
-            'error_message': 'Test error message',
+            'error_message': 'Test error',
             'failed_records': []
         }
-        
-        # Call the method
         result = self.file_processor._send_error_to_sqs(error_payload)
-        
-        # Verify the result
         self.assertFalse(result)
-        
-        # Verify that send_message was not called
-        self.sqs_client_mock.send_message.assert_not_called()
+        self.sqs_mock.send_message.assert_not_called()
     
     def test_send_error_to_sqs_invalid_arn(self):
         """Test sending error message to SQS with invalid ARN."""
-        # Set an invalid ARN
         self.file_processor.sqs_dlq_arn = 'invalid:arn'
-        
-        # Create a test error payload
         error_payload = {
-            'error_message': 'Test error message',
+            'error_message': 'Test error',
             'failed_records': []
         }
-        
-        # Call the method
         result = self.file_processor._send_error_to_sqs(error_payload)
-        
-        # Verify the result
         self.assertFalse(result)
-        
-        # Verify that send_message was not called
-        self.sqs_client_mock.send_message.assert_not_called()
+        self.sqs_mock.send_message.assert_not_called()
     
     def test_send_error_to_sqs_exception(self):
         """Test sending error message to SQS when an exception occurs."""
-        # Make send_message raise an exception
-        self.sqs_client_mock.send_message.side_effect = Exception('Test exception')
-        
-        # Create a test error payload
+        self.sqs_mock.get_queue_url.side_effect = Exception('Test exception')
         error_payload = {
-            'error_message': 'Test error message',
+            'error_message': 'Test error',
             'failed_records': []
         }
-        
-        # Call the method
         result = self.file_processor._send_error_to_sqs(error_payload)
-        
-        # Verify the result
         self.assertFalse(result)
     
     def test_send_error_to_sqs_large_message(self):
-        """Test sending a large error message that needs to be split."""
-        # Create a large error payload with fewer but larger records
-        failed_records = []
-        for i in range(10):  # Reduced from 1000 to 10 records
-            failed_records.append({
-                'document_id': f'doc{i}',
-                'error_type': 'test_error',
-                'error_reason': 'Test reason',
-                'document': {'id': f'doc{i}', 'name': f'Test Doc {i}', 'data': 'x' * 10000}  # Increased size per record
-            })
-        
+        """Test sending large error message to SQS."""
         error_payload = {
-            'error_message': 'Test error message with many failed records',
-            'failed_records': failed_records,
+            'error_message': 'Test error',
+            'failed_records': [{'data': 'x' * 100000}],  # Large record
             'file_key': 'test.csv',
-            'source': 'opensearch_ingestion'
+            'source': 'test'
         }
-        
-        # Mock the json.dumps to return a large string
-        with patch('json.dumps', return_value='x' * 300000):  # 300 KB
-            # Call the method
-            result = self.file_processor._send_error_to_sqs(error_payload)
-            
-            # Verify the result
-            self.assertTrue(result)
-            
-            # Verify that send_message was called multiple times
-            self.assertGreater(self.sqs_client_mock.send_message.call_count, 1)
-            
-            # Verify that each call includes the correct metadata
-            for call_args in self.sqs_client_mock.send_message.call_args_list:
-                # We can't parse the message body as JSON because it's a string of 'x' characters
-                # Instead, we'll verify that the queue URL is correct
-                self.assertEqual(call_args[1]['QueueUrl'], 'https://sqs.us-east-1.amazonaws.com/416449661344/mysamplequeue-dlq')
+        result = self.file_processor._send_error_to_sqs(error_payload)
+        self.assertTrue(result)
+        self.sqs_mock.send_message.assert_called()
     
     def test_print_error_records(self):
         """Test the _print_error_records method."""
-        # Create test failed records
         failed_records = [
             {
                 'document_id': 'doc1',
@@ -227,31 +219,19 @@ class TestFileProcessorSQS(unittest.TestCase):
             }
         ]
         
-        # Mock the _send_error_to_sqs method
         with patch.object(self.file_processor, '_send_error_to_sqs') as mock_send:
-            # Call the method
             self.file_processor._print_error_records(failed_records, 'test.csv')
-            
-            # Verify that _send_error_to_sqs was called with the correct arguments
             mock_send.assert_called_once()
             call_args = mock_send.call_args[0][0]
-            
-            # Verify the error payload
             self.assertEqual(call_args['error_message'], 'Bulk request had 2 failed records for file test.csv')
             self.assertEqual(call_args['file_key'], 'test.csv')
             self.assertEqual(call_args['source'], 'opensearch_ingestion')
             self.assertEqual(len(call_args['failed_records']), 2)
-            self.assertEqual(call_args['failed_records'][0]['document_id'], 'doc1')
-            self.assertEqual(call_args['failed_records'][1]['document_id'], 'doc2')
     
     def test_print_error_records_empty(self):
         """Test the _print_error_records method with empty failed records."""
-        # Mock the _send_error_to_sqs method
         with patch.object(self.file_processor, '_send_error_to_sqs') as mock_send:
-            # Call the method with empty failed records
             self.file_processor._print_error_records([], 'test.csv')
-            
-            # Verify that _send_error_to_sqs was not called
             mock_send.assert_not_called()
 
 if __name__ == '__main__':

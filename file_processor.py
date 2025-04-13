@@ -438,9 +438,9 @@ class FileProcessor:
                 
             # Only try to access response.json() if status is success
             response = result['response'].json()
+            failed_records = []
             if response.get('errors', False):
                 # Extract failed records
-                failed_records = []
                 for i, item in enumerate(response.get('items', [])):
                     index_result = item.get('index', {})
                     if index_result.get('status', 200) >= 400:  # Error status codes are 400 and above
@@ -455,10 +455,9 @@ class FileProcessor:
                 # Print error records using the dedicated function
                 if failed_records:
                     self._print_error_records(failed_records, file_key)
-                return False
-
+               
             if 'items' in response:
-                processed_count = len(response['items'])
+                processed_count = len(response['items']) - len(failed_records)
                 logger.info(f"Processed {processed_count} records from bulk request for file {file_key}")
             
             # Update processed count with the actual count from the response
@@ -582,7 +581,7 @@ class FileProcessor:
             
         return content, file_path, file_type
 
-    def process_file(self, file_info: Dict[str, Any], index_name: str, make_request_func: callable) -> int:
+    def process_file(self, file_info: Dict[str, Any], index_name: str, make_request_func: callable) -> Tuple[int, int]:
         """
         Process a single file (local or S3) and return number of processed rows.
         
@@ -597,19 +596,21 @@ class FileProcessor:
         self._make_request = make_request_func
         file_start_time = time.time()
         file_path = file_info.get("file_path", "")
+        with self._lock:
+                self._processed_count_from_bulk = 0
         
         try:
             content, file_path, file_type = self._get_file_content(file_info)
             logger.info(f"Processing {file_type.upper()} file: {file_path}")
             
-            row_count = 0
+            file_row_count = 0
             if file_type.lower() == 'csv':
-                row_count = self._process_csv_file(content, file_path)
+                file_row_count = self._process_csv_file(content, file_path)
             elif file_type.lower() == 'json':
-                row_count = self._process_json_file(content, file_path)
+                file_row_count = self._process_json_file(content, file_path)
             else:
                 logger.error(f"Unsupported file type: {file_type}")
-                return 0
+                return 0, 0
             
             # Process batches
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -626,8 +627,8 @@ class FileProcessor:
             
             file_time = time.time() - file_start_time
             logger.info(f"Completed processing file {file_path} in {file_time:.2f} seconds")
-            return row_count
+            return file_row_count, self._processed_count_from_bulk
                 
         except (IOError, json.JSONDecodeError) as e:
             logger.error(f"Error processing file {file_path}: {str(e)}")
-            return 0 
+            return 0, 0 

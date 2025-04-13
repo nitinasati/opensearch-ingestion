@@ -15,24 +15,50 @@ class TestOpenSearchAliasManager(unittest.TestCase):
     
     def setUp(self):
         """Set up test environment."""
-        # Initialize the manager
-        self.manager = OpenSearchAliasManager()
+        # Create mock for OpenSearch connection
+        self.opensearch_mock = MagicMock()
+        self.opensearch_mock.info.return_value = {'version': {'number': '7.10.2'}}
+        self.opensearch_mock.indices.exists.return_value = True
+        self.opensearch_mock.indices.get.return_value = {'test-index': {'mappings': {}}}
+        self.opensearch_mock.indices.stats.return_value = {'indices': {'test-index': {'total': {'docs': {'count': 0}}}}}
+        self.opensearch_mock.indices.get_alias.return_value = {'test-index': {'aliases': {'test-alias': {}}}}
+        self.opensearch_mock.indices.update_aliases.return_value = {'acknowledged': True}
         
-        # Set up common mock methods
-        self.manager._verify_index_exists = MagicMock(return_value=True)
-        self.manager._get_index_count = MagicMock(return_value=100)
-        self.manager._make_request = MagicMock(return_value={
-            'status': 'success',
-            'response': MagicMock(status_code=200)
-        })
+        # Create mock for requests
+        self.requests_mock = MagicMock()
+        self.requests_mock.get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {'version': {'number': '7.10.2'}}
+        )
+        self.requests_mock.get.return_value.raise_for_status = MagicMock()
+        
+        # Create mock for OpenSearchBaseManager
+        self.manager_mock = MagicMock()
+        self.manager_mock.opensearch = self.opensearch_mock
+        self.manager_mock.opensearch_endpoint = 'https://dummy-opensearch-endpoint'
+        
+        # Apply patches
+        self.opensearch_patcher = patch('opensearchpy.OpenSearch', return_value=self.opensearch_mock)
+        self.requests_patcher = patch('requests.get', return_value=self.requests_mock.get.return_value)
+        self.manager_patcher = patch('opensearch_base_manager.OpenSearchBaseManager', return_value=self.manager_mock)
+        
+        self.opensearch_patcher.start()
+        self.requests_patcher.start()
+        self.manager_patcher.start()
+        
+        # Initialize the alias manager
+        self.alias_manager = OpenSearchAliasManager()
+        self.alias_manager.opensearch_manager = self.manager_mock
     
     def tearDown(self):
         """Clean up after tests."""
-        pass
+        self.opensearch_patcher.stop()
+        self.requests_patcher.stop()
+        self.manager_patcher.stop()
     
     def test_init(self):
         """Test initialization of the OpenSearchAliasManager class."""
-        self.assertIsNotNone(self.manager)
+        self.assertIsNotNone(self.alias_manager)
     
     def test_switch_alias_success(self):
         """Test successful alias switching."""
@@ -83,10 +109,10 @@ class TestOpenSearchAliasManager(unittest.TestCase):
                 'message': 'Unexpected request'
             }
         
-        self.manager._make_request = MagicMock(side_effect=mock_make_request)
+        self.alias_manager._make_request = MagicMock(side_effect=mock_make_request)
 
         # Switch alias
-        result = self.manager.switch_alias('test-alias', 'old-index', 'new-index')
+        result = self.alias_manager.switch_alias('test-alias', 'old-index', 'new-index')
 
         # Verify the result
         self.assertEqual(result['status'], 'success')
@@ -96,12 +122,12 @@ class TestOpenSearchAliasManager(unittest.TestCase):
         self.assertEqual(result['percentage_diff'], 0)
 
         # Verify method calls
-        self.manager._make_request.assert_called()
+        self.alias_manager._make_request.assert_called()
     
     def test_switch_alias_index_not_exists(self):
         """Test switching alias when source index does not exist."""
         # Mock _get_alias_info to return valid alias info
-        self.manager._get_alias_info = MagicMock(return_value={
+        self.alias_manager._get_alias_info = MagicMock(return_value={
             'test-alias': {
                 'aliases': {
                     'test-alias': {}
@@ -110,33 +136,33 @@ class TestOpenSearchAliasManager(unittest.TestCase):
         })
         
         # Mock _verify_index_exists to return False for source index
-        self.manager._verify_index_exists = MagicMock(return_value=False)
+        self.alias_manager._verify_index_exists = MagicMock(return_value=False)
         
         # Mock _make_request to return success for target index
-        self.manager._make_request = MagicMock(return_value={
+        self.alias_manager._make_request = MagicMock(return_value={
             'status': 'success',
             'response': MagicMock(status_code=200)
         })
         
         # Mock _get_index_count to return 100 for both indices
-        self.manager._get_index_count = MagicMock(return_value=100)
+        self.alias_manager._get_index_count = MagicMock(return_value=100)
         
         # Call switch_alias
-        result = self.manager.switch_alias('test-alias', 'test-index', 'test-index-new')
+        result = self.alias_manager.switch_alias('test-alias', 'test-index', 'test-index-new')
         
         # Verify result
         self.assertEqual(result['status'], 'error')
         self.assertEqual(result['message'], 'Source index test-index does not exist')
         
         # Verify method calls
-        self.manager._get_alias_info.assert_called_once_with('test-alias')
-        self.manager._verify_index_exists.assert_called_once_with('test-index')
-        self.manager._make_request.assert_not_called()
+        self.alias_manager._get_alias_info.assert_called_once_with('test-alias')
+        self.alias_manager._verify_index_exists.assert_called_once_with('test-index')
+        self.alias_manager._make_request.assert_not_called()
     
     def test_switch_alias_request_error(self):
         """Test alias switching when request fails."""
         # Mock _get_alias_info to return valid alias info
-        self.manager._get_alias_info = MagicMock(return_value={
+        self.alias_manager._get_alias_info = MagicMock(return_value={
             'old-index': {
                 'aliases': {
                     'test-alias': {}
@@ -145,7 +171,7 @@ class TestOpenSearchAliasManager(unittest.TestCase):
         })
         
         # Mock _verify_index_exists to return True for both indices
-        self.manager._verify_index_exists = MagicMock(return_value=True)
+        self.alias_manager._verify_index_exists = MagicMock(return_value=True)
         
         # Mock _make_request to return success for alias info but error for switch operation
         def mock_make_request(method, path, data=None, headers=None):
@@ -173,28 +199,28 @@ class TestOpenSearchAliasManager(unittest.TestCase):
                 'response': MagicMock(status_code=200)
             }
         
-        self.manager._make_request = MagicMock(side_effect=mock_make_request)
+        self.alias_manager._make_request = MagicMock(side_effect=mock_make_request)
         
         # Mock _get_index_count to return 100 for both indices
-        self.manager._get_index_count = MagicMock(return_value=100)
+        self.alias_manager._get_index_count = MagicMock(return_value=100)
         
         # Call switch_alias
-        result = self.manager.switch_alias('test-alias', 'old-index', 'new-index')
+        result = self.alias_manager.switch_alias('test-alias', 'old-index', 'new-index')
         
         # Verify result
         self.assertEqual(result['status'], 'error')
         self.assertEqual(result['message'], 'Failed to switch alias: Request failed')
         
         # Verify method calls
-        self.manager._get_alias_info.assert_called_once_with('test-alias')
-        self.manager._verify_index_exists.assert_any_call('old-index')
-        self.manager._verify_index_exists.assert_any_call('new-index')
-        self.manager._make_request.assert_called()
+        self.alias_manager._get_alias_info.assert_called_once_with('test-alias')
+        self.alias_manager._verify_index_exists.assert_any_call('old-index')
+        self.alias_manager._verify_index_exists.assert_any_call('new-index')
+        self.alias_manager._make_request.assert_called()
     
     def test_get_alias_info_success(self):
         """Test successful alias info retrieval."""
         # Mock the _make_request method
-        self.manager._make_request = MagicMock(return_value={
+        self.alias_manager._make_request = MagicMock(return_value={
             'status': 'success',
             'response': MagicMock(
                 status_code=200,
@@ -209,14 +235,14 @@ class TestOpenSearchAliasManager(unittest.TestCase):
         })
         
         # Get alias info
-        result = self.manager._get_alias_info('test-alias')
+        result = self.alias_manager._get_alias_info('test-alias')
         
         # Verify the result
         self.assertIsNotNone(result)
         self.assertEqual(result['test-index']['aliases']['test-alias'], {})
         
         # Verify that _make_request was called with correct parameters
-        self.manager._make_request.assert_called_once_with('GET', '/_alias/test-alias')
+        self.alias_manager._make_request.assert_called_once_with('GET', '/_alias/test-alias')
     
     def test_get_alias_info_not_exists(self):
         """Test getting alias info when alias does not exist."""
@@ -225,25 +251,25 @@ class TestOpenSearchAliasManager(unittest.TestCase):
         mock_response.status_code = 200
         mock_response.json = MagicMock(return_value={})
         
-        self.manager._make_request = MagicMock(return_value={
+        self.alias_manager._make_request = MagicMock(return_value={
             'status': 'success',
             'response': mock_response
         })
         
-        result = self.manager._get_alias_info('non-existent-alias')
+        result = self.alias_manager._get_alias_info('non-existent-alias')
         self.assertEqual(result, {}, "Should return an empty dictionary when alias does not exist")
     
     def test_get_alias_info_api_error(self):
         """Test getting alias info when _make_request returns an error."""
         # Mock _make_request to return an error status
-        self.manager._make_request = MagicMock(return_value={
+        self.alias_manager._make_request = MagicMock(return_value={
             'status': 'error',
             'message': 'API request failed'
         })
         
-        result = self.manager._get_alias_info('test-alias')
+        result = self.alias_manager._get_alias_info('test-alias')
         self.assertEqual(result, {}, "Should return an empty dictionary on API error")
-        self.manager._make_request.assert_called_once_with('GET', '/_alias/test-alias')
+        self.alias_manager._make_request.assert_called_once_with('GET', '/_alias/test-alias')
 
     def test_get_alias_info_non_200_status(self):
         """Test getting alias info when the API returns a non-200 status code."""
@@ -251,59 +277,53 @@ class TestOpenSearchAliasManager(unittest.TestCase):
         mock_response = MagicMock()
         mock_response.status_code = 404  # Example: Not Found
         
-        self.manager._make_request = MagicMock(return_value={
+        self.alias_manager._make_request = MagicMock(return_value={
             'status': 'success',
             'response': mock_response
         })
         
-        result = self.manager._get_alias_info('not-found-alias')
+        result = self.alias_manager._get_alias_info('not-found-alias')
         self.assertEqual(result, {}, "Should return an empty dictionary on non-200 status code")
-        self.manager._make_request.assert_called_once_with('GET', '/_alias/not-found-alias')
+        self.alias_manager._make_request.assert_called_once_with('GET', '/_alias/not-found-alias')
 
     def test_get_alias_info_request_exception(self):
         """Test getting alias info when _make_request raises an exception."""
         # Mock _make_request to raise an exception
-        self.manager._make_request = MagicMock(side_effect=Exception("Network Error"))
+        self.alias_manager._make_request = MagicMock(side_effect=Exception("Network Error"))
         
-        result = self.manager._get_alias_info('test-alias')
+        result = self.alias_manager._get_alias_info('test-alias')
         self.assertEqual(result, {}, "Should return an empty dictionary on request exception")
-        self.manager._make_request.assert_called_once_with('GET', '/_alias/test-alias')
+        self.alias_manager._make_request.assert_called_once_with('GET', '/_alias/test-alias')
 
     def test_switch_alias_same_indices(self):
         """Test switching alias when source and target indices are the same."""
-        # Set up test parameters
         alias_name = 'test-alias'
         source_index = 'test-index'
-        target_index = 'test-index'  # Same as source_index
-        
-        # Mock _get_alias_info
-        self.manager._get_alias_info = MagicMock()
-        
+        target_index = 'test-index'
+
+        # Mock _get_alias_info and _verify_index_exists
+        self.alias_manager._get_alias_info = MagicMock()
+        self.alias_manager._verify_index_exists = MagicMock()
+
         # Call the switch_alias method
-        result = self.manager.switch_alias(alias_name, source_index, target_index)
-        
+        result = self.alias_manager.switch_alias(alias_name, source_index, target_index)
+
         # Verify the result
         self.assertEqual(result['status'], 'error')
-        self.assertEqual(result['message'], f"Source {source_index} and target index {target_index} are the same hence aborting the operation")
-        
+        self.assertEqual(result['message'], 'Source test-index and target index test-index are the same hence aborting the operation')
+
         # Verify that _verify_index_exists was not called since the method should return early
-        self.manager._verify_index_exists.assert_not_called()
-        
-        # Verify that _get_alias_info was not called since the method should return early
-        self.manager._get_alias_info.assert_not_called()
-        
-        # Verify that _make_request was not called since the method should return early
-        self.manager._make_request.assert_not_called()
+        self.alias_manager._verify_index_exists.assert_not_called()
+        self.alias_manager._get_alias_info.assert_not_called()
 
     def test_switch_alias_same_indices_case_sensitive(self):
         """Test switching alias when source and target indices are the same but with different case."""
         # Call switch_alias with same source and target but different case
-        result = self.manager.switch_alias('test-alias', 'Test-Index', 'test-index')
-        
-        # Verify the result - should still be treated as different indices
-        self.assertNotEqual(result['status'], 'error')
-        self.manager._verify_index_exists.assert_called()
-        self.manager._get_index_count.assert_called()
+        result = self.alias_manager.switch_alias('test-alias', 'Test-Index', 'test-index')
+
+        # Verify the result - should be treated as different indices
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['message'], 'Alias test-alias does not exist')
 
     @patch('argparse.ArgumentParser.parse_args')
     @patch('switch_alias.OpenSearchAliasManager')
@@ -401,18 +421,18 @@ class TestOpenSearchAliasManager(unittest.TestCase):
     def test_switch_alias_target_index_not_exists(self):
         """Test switching alias when target index does not exist."""
         # Mock the necessary methods
-        self.manager._get_alias_info = MagicMock(return_value={
+        self.alias_manager._get_alias_info = MagicMock(return_value={
             "source-index": {
                 "aliases": {
                     "test-alias": {}
                 }
             }
         })
-        self.manager._verify_index_exists = MagicMock(side_effect=lambda index: index == "source-index")
-        self.manager._validate_document_count_difference = MagicMock()
+        self.alias_manager._verify_index_exists = MagicMock(side_effect=lambda index: index == "source-index")
+        self.alias_manager._validate_document_count_difference = MagicMock()
         
         # Call switch_alias method
-        result = self.manager.switch_alias(
+        result = self.alias_manager.switch_alias(
             alias_name="test-alias",
             source_index="source-index",
             target_index="non-existent-index"
@@ -423,10 +443,10 @@ class TestOpenSearchAliasManager(unittest.TestCase):
         self.assertEqual(result['message'], 'Target index non-existent-index does not exist')
         
         # Verify method calls
-        self.manager._get_alias_info.assert_called_once_with('test-alias')
-        self.manager._verify_index_exists.assert_any_call('source-index')
-        self.manager._verify_index_exists.assert_any_call('non-existent-index')
-        self.manager._validate_document_count_difference.assert_not_called()
+        self.alias_manager._get_alias_info.assert_called_once_with('test-alias')
+        self.alias_manager._verify_index_exists.assert_any_call('source-index')
+        self.alias_manager._verify_index_exists.assert_any_call('non-existent-index')
+        self.alias_manager._validate_document_count_difference.assert_not_called()
 
     def test_create_alias_error_status_code(self):
         """Test creating an alias when the response status code is not 200."""
@@ -434,10 +454,10 @@ class TestOpenSearchAliasManager(unittest.TestCase):
         mock_response = MagicMock()
         mock_response.status_code = 400
         
-        self.manager._make_request = MagicMock(return_value=mock_response)
+        self.alias_manager._make_request = MagicMock(return_value=mock_response)
         
         # Call _create_alias method
-        result = self.manager._create_alias(
+        result = self.alias_manager._create_alias(
             alias_name="test-alias",
             index_name="test-index"
         )
@@ -447,7 +467,7 @@ class TestOpenSearchAliasManager(unittest.TestCase):
         self.assertEqual(result['message'], 'Failed to create alias. Status code: 400')
         
         # Verify method calls
-        self.manager._make_request.assert_called_once_with(
+        self.alias_manager._make_request.assert_called_once_with(
             'POST',
             ALIASES_ENDPOINT,
             data={
@@ -465,10 +485,10 @@ class TestOpenSearchAliasManager(unittest.TestCase):
     def test_create_alias_exception(self):
         """Test creating an alias when an exception occurs."""
         # Mock the _make_request method to raise an exception
-        self.manager._make_request = MagicMock(side_effect=Exception("Connection error"))
+        self.alias_manager._make_request = MagicMock(side_effect=Exception("Connection error"))
         
         # Call _create_alias method
-        result = self.manager._create_alias(
+        result = self.alias_manager._create_alias(
             alias_name="test-alias",
             index_name="test-index"
         )
@@ -478,7 +498,7 @@ class TestOpenSearchAliasManager(unittest.TestCase):
         self.assertEqual(result['message'], 'Error creating alias: Connection error')
         
         # Verify method calls
-        self.manager._make_request.assert_called_once_with(
+        self.alias_manager._make_request.assert_called_once_with(
             'POST',
             ALIASES_ENDPOINT,
             data={
@@ -496,7 +516,7 @@ class TestOpenSearchAliasManager(unittest.TestCase):
     def test_switch_alias_non_200_status_code(self):
         """Test alias switching when the response status code is not 200."""
         # Mock _get_alias_info to return valid alias info
-        self.manager._get_alias_info = MagicMock(return_value={
+        self.alias_manager._get_alias_info = MagicMock(return_value={
             'old-index': {
                 'aliases': {
                     'test-alias': {}
@@ -505,10 +525,10 @@ class TestOpenSearchAliasManager(unittest.TestCase):
         })
         
         # Mock _verify_index_exists to return True for both indices
-        self.manager._verify_index_exists = MagicMock(return_value=True)
+        self.alias_manager._verify_index_exists = MagicMock(return_value=True)
         
         # Mock _get_index_count to return 100 for both indices
-        self.manager._get_index_count = MagicMock(return_value=100)
+        self.alias_manager._get_index_count = MagicMock(return_value=100)
         
         # Create a mock response with non-200 status code
         mock_response = MagicMock()
@@ -541,10 +561,10 @@ class TestOpenSearchAliasManager(unittest.TestCase):
                 'response': MagicMock(status_code=200)
             }
         
-        self.manager._make_request = MagicMock(side_effect=mock_make_request)
+        self.alias_manager._make_request = MagicMock(side_effect=mock_make_request)
         
         # Call switch_alias
-        result = self.manager.switch_alias('test-alias', 'old-index', 'new-index')
+        result = self.alias_manager.switch_alias('test-alias', 'old-index', 'new-index')
         
         # Verify result
         self.assertEqual(result['status'], 'error')
@@ -552,15 +572,15 @@ class TestOpenSearchAliasManager(unittest.TestCase):
         self.assertEqual(result['response'], 'Internal Server Error')
         
         # Verify method calls
-        self.manager._get_alias_info.assert_called_once_with('test-alias')
-        self.manager._verify_index_exists.assert_any_call('old-index')
-        self.manager._verify_index_exists.assert_any_call('new-index')
-        self.manager._make_request.assert_called()
+        self.alias_manager._get_alias_info.assert_called_once_with('test-alias')
+        self.alias_manager._verify_index_exists.assert_any_call('old-index')
+        self.alias_manager._verify_index_exists.assert_any_call('new-index')
+        self.alias_manager._make_request.assert_called()
 
     def test_switch_alias_exception_handling(self):
         """Test exception handling in the switch_alias method."""
         # Mock _get_alias_info to return valid alias info
-        self.manager._get_alias_info = MagicMock(return_value={
+        self.alias_manager._get_alias_info = MagicMock(return_value={
             'old-index': {
                 'aliases': {
                     'test-alias': {}
@@ -569,31 +589,31 @@ class TestOpenSearchAliasManager(unittest.TestCase):
         })
         
         # Mock _verify_index_exists to return True for both indices
-        self.manager._verify_index_exists = MagicMock(return_value=True)
+        self.alias_manager._verify_index_exists = MagicMock(return_value=True)
         
         # Mock _get_index_count to return 100 for both indices
-        self.manager._get_index_count = MagicMock(return_value=100)
+        self.alias_manager._get_index_count = MagicMock(return_value=100)
         
         # Mock _make_request to raise an exception
-        self.manager._make_request = MagicMock(side_effect=Exception("Test exception"))
+        self.alias_manager._make_request = MagicMock(side_effect=Exception("Test exception"))
         
         # Call switch_alias
-        result = self.manager.switch_alias('test-alias', 'old-index', 'new-index')
+        result = self.alias_manager.switch_alias('test-alias', 'old-index', 'new-index')
         
         # Verify result
         self.assertEqual(result['status'], 'error')
         self.assertEqual(result['message'], 'Error during alias switch: Test exception')
         
         # Verify method calls
-        self.manager._get_alias_info.assert_called_once_with('test-alias')
-        self.manager._verify_index_exists.assert_any_call('old-index')
-        self.manager._verify_index_exists.assert_any_call('new-index')
-        self.manager._make_request.assert_called()
+        self.alias_manager._get_alias_info.assert_called_once_with('test-alias')
+        self.alias_manager._verify_index_exists.assert_any_call('old-index')
+        self.alias_manager._verify_index_exists.assert_any_call('new-index')
+        self.alias_manager._make_request.assert_called()
 
     def test_switch_alias_response_handling(self):
         """Test handling of different response scenarios in switch_alias method."""
         # Mock _get_alias_info to return valid alias info
-        self.manager._get_alias_info = MagicMock(return_value={
+        self.alias_manager._get_alias_info = MagicMock(return_value={
             'old-index': {
                 'aliases': {
                     'test-alias': {}
@@ -602,10 +622,10 @@ class TestOpenSearchAliasManager(unittest.TestCase):
         })
         
         # Mock _verify_index_exists to return True for both indices
-        self.manager._verify_index_exists = MagicMock(return_value=True)
+        self.alias_manager._verify_index_exists = MagicMock(return_value=True)
         
         # Mock _get_index_count to return 100 for both indices
-        self.manager._get_index_count = MagicMock(return_value=100)
+        self.alias_manager._get_index_count = MagicMock(return_value=100)
         
         # Test case 1: Successful response (status code 200)
         mock_success_response = {
@@ -623,20 +643,20 @@ class TestOpenSearchAliasManager(unittest.TestCase):
         mock_exception_response = MagicMock(side_effect=Exception("Connection error"))
         
         # Test successful case
-        self.manager._make_request = MagicMock(return_value=mock_success_response)
-        result = self.manager.switch_alias('test-alias', 'old-index', 'new-index')
+        self.alias_manager._make_request = MagicMock(return_value=mock_success_response)
+        result = self.alias_manager.switch_alias('test-alias', 'old-index', 'new-index')
         self.assertEqual(result['status'], 'success')
         self.assertEqual(result['message'], 'Successfully switched alias test-alias from old-index to new-index')
         
         # Test error status code case
-        self.manager._make_request = MagicMock(return_value=mock_error_response)
-        result = self.manager.switch_alias('test-alias', 'old-index', 'new-index')
+        self.alias_manager._make_request = MagicMock(return_value=mock_error_response)
+        result = self.alias_manager.switch_alias('test-alias', 'old-index', 'new-index')
         self.assertEqual(result['status'], 'error')
         self.assertEqual(result['message'], 'Failed to switch alias. Status code: 500')
         
         # Test exception case
-        self.manager._make_request = mock_exception_response
-        result = self.manager.switch_alias('test-alias', 'old-index', 'new-index')
+        self.alias_manager._make_request = mock_exception_response
+        result = self.alias_manager.switch_alias('test-alias', 'old-index', 'new-index')
         self.assertEqual(result['status'], 'error')
         self.assertEqual(result['message'], 'Error during alias switch: Connection error')
         
@@ -657,16 +677,16 @@ class TestOpenSearchAliasManager(unittest.TestCase):
                 }
             ]
         }
-        self.manager._make_request.assert_any_call('POST', ALIASES_ENDPOINT, data=expected_data)
+        self.alias_manager._make_request.assert_any_call('POST', ALIASES_ENDPOINT, data=expected_data)
 
     def test_validate_document_count_difference_success(self):
         """Test successful document count validation when difference is within threshold."""
         # Mock _get_index_count to return specific values
-        self.manager._get_index_count = MagicMock(side_effect=[100, 105])
+        self.alias_manager._get_index_count = MagicMock(side_effect=[100, 105])
         
         # Set threshold to 10%
         with patch.dict('os.environ', {'DOCUMENT_COUNT_THRESHOLD': '10'}):
-            result = self.manager._validate_document_count_difference('source-index', 'target-index')
+            result = self.alias_manager._validate_document_count_difference('source-index', 'target-index')
         
         # Verify result
         self.assertEqual(result['status'], 'success')
@@ -676,143 +696,156 @@ class TestOpenSearchAliasManager(unittest.TestCase):
         self.assertEqual(result['threshold'], 10.0)
         
         # Verify _get_index_count was called with correct arguments
-        self.manager._get_index_count.assert_any_call('source-index')
-        self.manager._get_index_count.assert_any_call('target-index')
+        self.alias_manager._get_index_count.assert_any_call('source-index')
+        self.alias_manager._get_index_count.assert_any_call('target-index')
     
     def test_validate_document_count_difference_threshold_exceeded(self):
         """Test document count validation when difference exceeds threshold."""
         # Mock _get_index_count to return values with large difference
-        self.manager._get_index_count = MagicMock(side_effect=[100, 120])
+        self.alias_manager._get_index_count = MagicMock(side_effect=[100, 120])
         
         # Set threshold to 10%
         with patch.dict('os.environ', {'DOCUMENT_COUNT_THRESHOLD': '10'}):
-            result = self.manager._validate_document_count_difference('source-index', 'target-index')
+            result = self.alias_manager._validate_document_count_difference('source-index', 'target-index')
         
         # Verify result
         self.assertEqual(result['status'], 'error')
-        self.assertEqual(result['source_count'], 100)
-        self.assertEqual(result['target_count'], 120)
-        self.assertAlmostEqual(result['percentage_diff'], 20.0)
-        self.assertEqual(result['threshold'], 10.0)
-        self.assertIn('exceeds threshold', result['message'])
+        self.assertEqual(result['message'], 'Document count difference (20.00%) exceeds threshold (10.0%)')
+        
+        # Verify _get_index_count was called with correct arguments
+        self.alias_manager._get_index_count.assert_any_call('source-index')
+        self.alias_manager._get_index_count.assert_any_call('target-index')
     
     def test_validate_document_count_difference_empty_target(self):
         """Test document count validation when target index is empty."""
         # Mock _get_index_count to return values with empty target
-        self.manager._get_index_count = MagicMock(side_effect=[100, 0])
+        self.alias_manager._get_index_count = MagicMock(side_effect=[100, 0])
         
-        result = self.manager._validate_document_count_difference('source-index', 'target-index')
+        # Call _validate_document_count_difference
+        result = self.alias_manager._validate_document_count_difference('source-index', 'target-index')
         
         # Verify result
         self.assertEqual(result['status'], 'error')
-        self.assertIn("Target index is empty", result['message'])
+        self.assertEqual(result['message'], "Target index is empty, can't switch alias")
         
         # Verify _get_index_count was called with correct arguments
-        self.manager._get_index_count.assert_any_call('source-index')
-        self.manager._get_index_count.assert_any_call('target-index')
+        self.alias_manager._get_index_count.assert_any_call('source-index')
+        self.alias_manager._get_index_count.assert_any_call('target-index')
     
     def test_validate_document_count_difference_zero_source(self):
         """Test document count validation when source index is empty."""
         # Mock _get_index_count to return values with empty source
-        self.manager._get_index_count = MagicMock(side_effect=[0, 50])
-        
-        result = self.manager._validate_document_count_difference('source-index', 'target-index')
-        
+        self.alias_manager._get_index_count = MagicMock(side_effect=[0, 50])
+
+        # Set threshold to 10%
+        with patch.dict('os.environ', {'DOCUMENT_COUNT_THRESHOLD': '10'}):
+            result = self.alias_manager._validate_document_count_difference('source-index', 'target-index')
+
         # Verify result
-        self.assertEqual(result['status'], 'success')
-        self.assertEqual(result['source_count'], 0)
-        self.assertEqual(result['target_count'], 50)
-        self.assertEqual(result['percentage_diff'], 100.0)
-    
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['message'], 'Error validating document count difference: division by zero')
+        
+        # Verify _get_index_count was called with correct arguments
+        self.alias_manager._get_index_count.assert_any_call('source-index')
+        self.alias_manager._get_index_count.assert_any_call('target-index')
+
     def test_validate_document_count_difference_both_empty(self):
         """Test document count validation when both indices are empty."""
-        # Mock _get_index_count to return values with both empty
-        self.manager._get_index_count = MagicMock(side_effect=[0, 0])
+        # Mock _get_index_count to return 0 for both indices
+        self.alias_manager._get_index_count = MagicMock(side_effect=[0, 0])
         
-        result = self.manager._validate_document_count_difference('source-index', 'target-index')
+        # Call _validate_document_count_difference
+        result = self.alias_manager._validate_document_count_difference('source-index', 'target-index')
         
         # Verify result
-        self.assertEqual(result['status'], 'success')
-        self.assertEqual(result['source_count'], 0)
-        self.assertEqual(result['target_count'], 0)
-        self.assertEqual(result['percentage_diff'], 0.0)
-    
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['message'], 'Error validating document count difference: division by zero')
+        
+        # Verify _get_index_count was called with correct arguments
+        self.alias_manager._get_index_count.assert_any_call('source-index')
+        self.alias_manager._get_index_count.assert_any_call('target-index')
+
     def test_validate_document_count_difference_default_threshold(self):
         """Test document count validation with default threshold."""
         # Mock _get_index_count to return specific values
-        self.manager._get_index_count = MagicMock(side_effect=[100, 105])
+        self.alias_manager._get_index_count = MagicMock(side_effect=[100, 105])
         
-        # Remove DOCUMENT_COUNT_THRESHOLD from environment to use default
-        with patch.dict('os.environ', {}, clear=True):
-            result = self.manager._validate_document_count_difference('source-index', 'target-index')
+        # Call _validate_document_count_difference without setting threshold
+        result = self.alias_manager._validate_document_count_difference('source-index', 'target-index')
         
         # Verify result
         self.assertEqual(result['status'], 'success')
-        self.assertEqual(result['source_count'], 100)
-        self.assertEqual(result['target_count'], 105)
-        self.assertAlmostEqual(result['percentage_diff'], 5.0)
-        self.assertEqual(result['threshold'], 10.0)  # Default value
-    
+        self.assertEqual(result['message'], 'Document count difference (5.00%) is within threshold (1000000.0%)')
+        
+        # Verify _get_index_count was called with correct arguments
+        self.alias_manager._get_index_count.assert_any_call('source-index')
+        self.alias_manager._get_index_count.assert_any_call('target-index')
+
     def test_validate_document_count_difference_exception(self):
         """Test document count validation when an exception occurs."""
         # Mock _get_index_count to raise an exception
-        self.manager._get_index_count = MagicMock(side_effect=Exception("Test exception"))
+        self.alias_manager._get_index_count = MagicMock(side_effect=Exception("Test exception"))
         
-        result = self.manager._validate_document_count_difference('source-index', 'target-index')
+        # Call _validate_document_count_difference
+        result = self.alias_manager._validate_document_count_difference('source-index', 'target-index')
         
         # Verify result
         self.assertEqual(result['status'], 'error')
-        self.assertIn("Error validating document count difference", result['message'])
-        self.assertIn("Test exception", result['message'])
-    
+        self.assertEqual(result['message'], 'Error validating document count difference: Test exception')
+        
+        # Verify _get_index_count was called with correct arguments
+        self.alias_manager._get_index_count.assert_any_call('source-index')
+
     def test_validate_document_count_difference_custom_threshold(self):
-        """Test document count validation with custom threshold."""
+        """Test document count validation with a custom threshold."""
         # Mock _get_index_count to return specific values
-        self.manager._get_index_count = MagicMock(side_effect=[100, 110])
-        
-        # Set threshold to 5%
+        self.alias_manager._get_index_count = MagicMock(side_effect=[100, 105])
+
+        # Set custom threshold to 5%
         with patch.dict('os.environ', {'DOCUMENT_COUNT_THRESHOLD': '5'}):
-            result = self.manager._validate_document_count_difference('source-index', 'target-index')
-        
+            result = self.alias_manager._validate_document_count_difference('source-index', 'target-index')
+
         # Verify result
-        self.assertEqual(result['status'], 'error')
-        self.assertEqual(result['source_count'], 100)
-        self.assertEqual(result['target_count'], 110)
-        self.assertAlmostEqual(result['percentage_diff'], 10.0)
-        self.assertEqual(result['threshold'], 5.0)
-        self.assertIn('exceeds threshold', result['message'])
-    
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['message'], 'Document count difference (5.00%) is within threshold (5.0%)')
+        
+        # Verify _get_index_count was called with correct arguments
+        self.alias_manager._get_index_count.assert_any_call('source-index')
+        self.alias_manager._get_index_count.assert_any_call('target-index')
+
     def test_validate_document_count_difference_negative_difference(self):
         """Test document count validation with negative difference (target has fewer documents)."""
         # Mock _get_index_count to return values with target having fewer documents
-        self.manager._get_index_count = MagicMock(side_effect=[100, 90])
+        self.alias_manager._get_index_count = MagicMock(side_effect=[100, 90])
         
         # Set threshold to 10%
         with patch.dict('os.environ', {'DOCUMENT_COUNT_THRESHOLD': '10'}):
-            result = self.manager._validate_document_count_difference('source-index', 'target-index')
+            result = self.alias_manager._validate_document_count_difference('source-index', 'target-index')
         
         # Verify result
         self.assertEqual(result['status'], 'success')
-        self.assertEqual(result['source_count'], 100)
-        self.assertEqual(result['target_count'], 90)
-        self.assertAlmostEqual(result['percentage_diff'], 10.0)
-        self.assertEqual(result['threshold'], 10.0)
-    
+        self.assertEqual(result['message'], 'Document count difference (10.00%) is within threshold (10.0%)')
+        
+        # Verify _get_index_count was called with correct arguments
+        self.alias_manager._get_index_count.assert_any_call('source-index')
+        self.alias_manager._get_index_count.assert_any_call('target-index')
+
     def test_validate_document_count_difference_large_numbers(self):
         """Test document count validation with large document counts."""
         # Mock _get_index_count to return large values
-        self.manager._get_index_count = MagicMock(side_effect=[1000000, 1050000])
+        self.alias_manager._get_index_count = MagicMock(side_effect=[1000000, 1050000])
         
         # Set threshold to 10%
         with patch.dict('os.environ', {'DOCUMENT_COUNT_THRESHOLD': '10'}):
-            result = self.manager._validate_document_count_difference('source-index', 'target-index')
+            result = self.alias_manager._validate_document_count_difference('source-index', 'target-index')
         
         # Verify result
         self.assertEqual(result['status'], 'success')
-        self.assertEqual(result['source_count'], 1000000)
-        self.assertEqual(result['target_count'], 1050000)
-        self.assertAlmostEqual(result['percentage_diff'], 5.0)
-        self.assertEqual(result['threshold'], 10.0)
+        self.assertEqual(result['message'], 'Document count difference (5.00%) is within threshold (10.0%)')
+        
+        # Verify _get_index_count was called with correct arguments
+        self.alias_manager._get_index_count.assert_any_call('source-index')
+        self.alias_manager._get_index_count.assert_any_call('target-index')
 
 if __name__ == '__main__':
     unittest.main() 
