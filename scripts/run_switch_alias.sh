@@ -37,9 +37,9 @@
 # =============================================================================
 
 # Set default values
-ALIAS="member_index"
+ALIAS="member_search_alias"
+NEW_INDEX="member_index_secondary"
 OLD_INDEX="member_index_primary"
-NEW_INDEX="member_index_primary_new"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -107,14 +107,25 @@ log_message "INFO" "  Alias: ${ALIAS}"
 log_message "INFO" "  Old Index: ${OLD_INDEX}"
 log_message "INFO" "  New Index: ${NEW_INDEX}"
 
-# Execute the command
+# Execute the command and capture output
 log_message "INFO" "Starting alias switch process..."
+TEMP_OUTPUT=$(mktemp)
 if ! python ../switch_alias.py \
     --alias "$ALIAS" \
-    --old-index "$OLD_INDEX" \
-    --new-index "$NEW_INDEX" 2>&1 | tee -a "$LOG_FILE"; then
+    --source "$OLD_INDEX" \
+    --target "$NEW_INDEX" 2>&1 | tee "$TEMP_OUTPUT" "$LOG_FILE"; then
     handle_error "Alias switch process failed"
 fi
+
+# Check for error messages in the output
+if grep -q "ERROR" "$TEMP_OUTPUT" || grep -q "Failed to switch alias" "$TEMP_OUTPUT"; then
+    log_message "ERROR" "Alias switch process failed - check logs for details"
+    rm -f "$TEMP_OUTPUT"
+    exit 1
+fi
+
+# Clean up temporary file
+rm -f "$TEMP_OUTPUT"
 
 log_message "INFO" "Alias switch process completed successfully"
 exit 0 

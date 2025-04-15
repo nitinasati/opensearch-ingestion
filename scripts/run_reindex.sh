@@ -10,7 +10,7 @@
 #   logging, and status reporting.
 #
 # Features:
-#   - Automated reindexing process
+#   - Automated reindex process
 #   - Comprehensive error handling and logging
 #   - Pre-execution validation checks
 #   - Detailed execution status reporting
@@ -39,9 +39,7 @@
 
 # Set default values
 SOURCE_INDEX="member_index_primary"
-TARGET_INDEX="member_index_primary_new"
-BATCH_SIZE=1000
-MAX_WORKERS=2
+TARGET_INDEX="member_index_secondary"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -68,6 +66,12 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Validate required arguments
+if [ -z "$SOURCE_INDEX" ] || [ -z "$TARGET_INDEX" ]; then
+    echo "Error: --source-index and --target-index are required"
+    exit 1
+fi
 
 # Set up logging
 SCRIPT_NAME=$(basename "$0" .sh)
@@ -114,15 +118,31 @@ log_message "INFO" "  Target Index: ${TARGET_INDEX}"
 log_message "INFO" "  Batch Size: ${BATCH_SIZE}"
 log_message "INFO" "  Max Workers: ${MAX_WORKERS}"
 
-# Execute the command
+# Execute the command and capture output
 log_message "INFO" "Starting reindex process..."
-if ! python ../reindex.py \
-    --source-index "$SOURCE_INDEX" \
-    --target-index "$TARGET_INDEX" \
-    --batch-size "$BATCH_SIZE" \
-    --max-workers "$MAX_WORKERS" 2>&1 | tee -a "$LOG_FILE"; then
+TEMP_OUTPUT=$(mktemp)
+
+# Build the command
+CMD="python ../reindex.py --source ${SOURCE_INDEX} --target ${TARGET_INDEX}"
+
+# Execute the command and capture output
+if ! $CMD 2>&1 | tee "$TEMP_OUTPUT" "$LOG_FILE"; then
     handle_error "Reindex process failed"
 fi
+
+# Check for error messages in the output
+if grep -q "ERROR" "$TEMP_OUTPUT" || \
+   grep -q "Failed to reindex" "$TEMP_OUTPUT" || \
+   grep -q "Document count mismatch" "$TEMP_OUTPUT" || \
+   grep -q "Expected documents: [0-9]*, Actual documents: [0-9]*" "$TEMP_OUTPUT" || \
+   grep -q "Failed to process" "$TEMP_OUTPUT"; then
+    log_message "ERROR" "Reindex process failed - check logs for details"
+    rm -f "$TEMP_OUTPUT"
+    exit 1
+fi
+
+# Clean up temporary file
+rm -f "$TEMP_OUTPUT"
 
 log_message "INFO" "Reindex process completed successfully"
 exit 0 
