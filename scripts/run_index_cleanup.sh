@@ -5,12 +5,12 @@
 # =============================================================================
 #
 # Purpose:
-#   This script automates the process of cleaning up and validating OpenSearch indices.
+#   This script automates the process of cleaning up an OpenSearch index.
 #   It handles the execution of the index_cleanup.py script with proper error handling,
 #   logging, and status reporting.
 #
 # Features:
-#   - Automated index cleanup and validation
+#   - Automated index cleanup process
 #   - Comprehensive error handling and logging
 #   - Pre-execution validation checks
 #   - Detailed execution status reporting
@@ -57,6 +57,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Validate required arguments
+if [ -z "$INDEX" ]; then
+    echo "Error: --index is required"
+    exit 1
+fi
+
 # Set up logging
 SCRIPT_NAME=$(basename "$0" .sh)
 LOG_DIR="../logs"
@@ -100,13 +106,34 @@ log_message "INFO" "Configuration:"
 log_message "INFO" "  Index: ${INDEX}"
 log_message "INFO" "  Force: ${FORCE}"
 
-# Execute the command
+# Execute the command and capture output
 log_message "INFO" "Starting index cleanup process..."
-if ! python ../index_cleanup.py \
-    --index "$INDEX" \
-    $([ "$FORCE" = "true" ] && echo "--force") 2>&1 | tee -a "$LOG_FILE"; then
+TEMP_OUTPUT=$(mktemp)
+
+# Build the command
+CMD="python ../index_cleanup.py --index ${INDEX}"
+if [ "$FORCE" = "true" ]; then
+    CMD="$CMD --force"
+fi
+
+# Execute the command and capture output
+if ! $CMD 2>&1 | tee "$TEMP_OUTPUT" "$LOG_FILE"; then
     handle_error "Index cleanup process failed"
 fi
+
+# Check for error messages in the output
+if grep -q "ERROR" "$TEMP_OUTPUT" || \
+   grep -q "Failed to" "$TEMP_OUTPUT" || \
+   grep -q "Error making request" "$TEMP_OUTPUT" || \
+   grep -q "Error verifying index exists" "$TEMP_OUTPUT" || \
+   grep -q "Index .* does not exist" "$TEMP_OUTPUT"; then
+    log_message "ERROR" "Index cleanup process failed - check logs for details"
+    rm -f "$TEMP_OUTPUT"
+    exit 1
+fi
+
+# Clean up temporary file
+rm -f "$TEMP_OUTPUT"
 
 log_message "INFO" "Index cleanup process completed successfully"
 exit 0 
