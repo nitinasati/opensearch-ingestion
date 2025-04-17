@@ -60,10 +60,11 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
         s3_client (boto3.client): AWS S3 client
         index_manager (OpenSearchIndexManager): Manager for index operations
         max_workers (int): Maximum number of parallel threads for processing
+        kms_key_id (str, optional): KMS key ID for S3 encryption/decryption
     """
     
     def __init__(self, batch_size: int = 10000, opensearch_endpoint: Optional[str] = None, 
-                 max_workers: int = 4):
+                 max_workers: int = 4, kms_key_id: Optional[str] = None):
         """
         Initialize the bulk ingestion manager.
         
@@ -71,6 +72,7 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
             batch_size (int): Number of documents to process in each batch
             opensearch_endpoint (str, optional): The OpenSearch cluster endpoint URL
             max_workers (int): Maximum number of parallel threads for processing
+            kms_key_id (str, optional): KMS key ID for S3 encryption/decryption
         """
         # Initialize parent class
         super().__init__(opensearch_endpoint=opensearch_endpoint)
@@ -78,6 +80,7 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
         # Initialize instance attributes
         self.batch_size = batch_size
         self.max_workers = max_workers
+        self.kms_key_id = kms_key_id or os.getenv('S3_KMS_KEY_ID')
         self._batch_queue = Queue()
         self._processed_count = 0
         self._lock = threading.Lock()
@@ -85,7 +88,11 @@ class OpenSearchBulkIngestion(OpenSearchBaseManager):
         # Initialize clients and processors
         self.s3_client = boto3.client('s3')
         self.index_manager = OpenSearchIndexManager(opensearch_endpoint=opensearch_endpoint)
-        self.file_processor = FileProcessor(batch_size=batch_size, max_workers=max_workers)
+        self.file_processor = FileProcessor(
+            batch_size=batch_size, 
+            max_workers=max_workers,
+            kms_key_id=self.kms_key_id
+        )
         
         logger.info(f"Initialized OpenSearchBulkIngestion with batch_size: {batch_size}, max_workers: {max_workers}")
 
@@ -570,6 +577,7 @@ def main():
     parser.add_argument('--max-workers', type=int, default=4, help='Maximum number of parallel threads (default: 4)')
     parser.add_argument('--resume', action='store_true', help='Resume processing from previously processed files')
     parser.add_argument('--fresh-load', action='store_true', help='Perform a fresh load, clearing the tracking file (default behavior)')
+    parser.add_argument('--kms-key-id', help='KMS key ID for S3 encryption/decryption')
     args = parser.parse_args()
     
     # Validate that at least one data source is provided
@@ -587,7 +595,8 @@ def main():
         # Initialize ingestion service with batch size and max workers
         ingestion_service = OpenSearchBulkIngestion(
             batch_size=args.batch_size,
-            max_workers=args.max_workers
+            max_workers=args.max_workers,
+            kms_key_id=args.kms_key_id
         )
         
         # Start ingestion with command line arguments
