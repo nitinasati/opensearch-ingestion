@@ -82,7 +82,7 @@ REM Step 3: Bulk Update Primary Index with S3 bucket
 echo %date% %time% - Step 3: Bulk Updating Primary Index with S3 bucket
 echo %date% %time% - Step 3: Bulk Updating Primary Index with S3 bucket >> "%logFile%"
 set "step3StartTime=%time%"
-python bulkupdate.py --bucket openlpocbucket --prefix opensearch/ --index member_index_primary --batch-size 1000 --resume
+python bulkupdate.py --bucket openlpocbucket25 --prefix opensearch/ --index member_index_primary --batch-size 1000 --resume
 if %ERRORLEVEL% NEQ 0 (
     echo %date% %time% - Error: Failed to bulk update primary index
     echo %date% %time% - Error: Failed to bulk update primary index >> "%logFile%"

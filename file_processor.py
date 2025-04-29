@@ -30,20 +30,16 @@ class FileProcessor:
     Handles file processing from different sources (local and S3).
     """
     
-    def __init__(self, batch_size: int = 10000, max_workers: int = 4, kms_key_id: Optional[str] = None):
+    def __init__(self, batch_size: int = 10000, max_workers: int = 4):
         """
         Initialize the file processor.
         
         Args:
             batch_size (int): Number of documents to process in each batch
             max_workers (int): Maximum number of parallel threads for processing
-            kms_key_id (str, optional): KMS key ID for S3 encryption/decryption
         """
         self.batch_size = batch_size
         self.max_workers = max_workers
-        self.kms_key_id = kms_key_id or os.getenv('S3_KMS_KEY_ID')
-        
-        # Initialize S3 client
         self.s3_client = boto3.client('s3')
         self._batch_queue = Queue()
         self._processed_count = 0
@@ -570,18 +566,7 @@ class FileProcessor:
             key = file_info["key"]
             file_path = f"{bucket}/{key}"
             logger.info(f"Processing S3 file: {file_path}")
-            
-            # Add KMS key to get_object if configured
-            get_object_params = {
-                'Bucket': bucket,
-                'Key': key
-            }
-            if self.kms_key_id:
-                get_object_params['SSECustomerAlgorithm'] = 'AES256'
-                get_object_params['SSECustomerKey'] = self.kms_key_id
-                logger.info(f"Using KMS key {self.kms_key_id} for S3 file {file_path}")
-                
-            response = self.s3_client.get_object(**get_object_params)
+            response = self.s3_client.get_object(Bucket=bucket, Key=key)
             content = response['Body'].read().decode('utf-8')
         else:
             file_path = file_info.get("file_path", "")
