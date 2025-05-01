@@ -1,0 +1,21 @@
+# OpenSearch Configuration
+OPENSEARCH_ENDPOINT=https://localhost:9200
+# Username/Password Authentication (required when USE_AWS_AUTH=false)
+OPENSEARCH_USERNAME=<username>
+OPENSEARCH_PASSWORD=<password>
+AWS_REGION=us-east-1
+INDEX_RECREATE_THRESHOLD=1000000
+LOG_LEVEL=DEBUG
+LOG_FORMAT=json
+VERIFY_SSL=false
+DOCUMENT_COUNT_THRESHOLD=1000  # Percentage record difference threshold for alias switch operation between source and target index
+SQS-DLQ-ARN=<sqs-dlq-arn>
+DLQ=disabled
+S3_KMS_KEY_ID=<your-kms-key-id>
+
+# Authentication Method (true for AWS IAM, false for username/password)
+USE_AWS_AUTH=false
+
+SQS_QUEUE_URL=<sqs-queue-url>
+SQS_WAIT_TIME=20
+SQS_SCHEDULE_INTERVAL=1

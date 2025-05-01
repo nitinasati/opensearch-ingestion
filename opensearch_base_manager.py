@@ -34,7 +34,7 @@ class OpenSearchException(Exception):
 
 class OpenSearchBaseManager:
     """
-    Base class for OpenSearch operations with support for AWS IAM authentication.
+    Base class for OpenSearch operations with support for both AWS IAM and username/password authentication.
     """
     
     # Content type constant
@@ -48,11 +48,12 @@ class OpenSearchBaseManager:
             opensearch_endpoint (str, optional): The OpenSearch cluster endpoint URL
             
         Raises:
-            ValueError: If OpenSearch endpoint is not provided
+            ValueError: If OpenSearch endpoint is not provided or required credentials are missing
             OpenSearchException: If connection to OpenSearch fails after maximum retries
         """
         self.opensearch_endpoint = opensearch_endpoint or os.getenv('OPENSEARCH_ENDPOINT')
         self.verify_ssl = os.getenv('VERIFY_SSL', 'false').lower() == 'true'
+        self.use_aws_auth = os.getenv('USE_AWS_AUTH', 'true').lower() == 'true'
         
         if not self.opensearch_endpoint:
             raise ValueError("OpenSearch endpoint is required")
@@ -60,23 +61,38 @@ class OpenSearchBaseManager:
         # Remove https:// prefix if present
         self.opensearch_endpoint = self.opensearch_endpoint.replace('https://', '')
         
-        # Initialize AWS session and credentials
-        self.aws_region = os.getenv('AWS_REGION', 'us-east-1')
-        
         logger.info(f"Initializing OpenSearch connection with endpoint: {self.opensearch_endpoint}")
-        logger.info(f"Using AWS region: {self.aws_region}")
         logger.info(f"Using SSL verification: {self.verify_ssl} (from VERIFY_SSL environment variable)")
+        logger.info(f"Using {'AWS IAM' if self.use_aws_auth else 'username/password'} authentication")
         
-        # Initialize AWS session and auth
-        self.session = boto3.Session()
-        self.credentials = self.session.get_credentials()
-        self.auth = AWS4Auth(
-            self.credentials.access_key,
-            self.credentials.secret_key,
-            self.aws_region,
-            'es',
-            session_token=self.credentials.token
-        )
+        if self.use_aws_auth:
+            # Initialize AWS session and credentials
+            self.aws_region = os.getenv('AWS_REGION', 'us-east-1')
+            logger.info(f"Using AWS region: {self.aws_region}")
+            
+            # Initialize AWS session and auth
+            self.session = boto3.Session()
+            self.credentials = self.session.get_credentials()
+            if not self.credentials:
+                raise ValueError("AWS credentials not found. Please configure AWS credentials.")
+                
+            self.auth = AWS4Auth(
+                self.credentials.access_key,
+                self.credentials.secret_key,
+                self.aws_region,
+                'es',
+                session_token=self.credentials.token
+            )
+        else:
+            # Initialize username/password authentication
+            self.username = os.getenv('OPENSEARCH_USERNAME')
+            self.password = os.getenv('OPENSEARCH_PASSWORD')
+            
+            if not self.username or not self.password:
+                raise ValueError("OpenSearch username and password are required when not using AWS authentication")
+                
+            logger.info("Using username/password authentication")
+            self.auth = (self.username, self.password)
         
         # Set up logging
         self._setup_logging()
@@ -101,6 +117,8 @@ class OpenSearchBaseManager:
         while retry_count < max_retries:
             try:
                 logger.info(f"Testing connection to OpenSearch (Attempt {retry_count + 1}/{max_retries})")
+                logger.info(f"Using {'AWS IAM' if self.use_aws_auth else 'username/password'} authentication")
+                
                 # Make a simple request to test the connection
                 response = requests.get(
                     f"https://{self.opensearch_endpoint}",
@@ -143,7 +161,7 @@ class OpenSearchBaseManager:
 
     def _make_request(self, method: str, path: str, data: Optional[Dict[str, Any]] = None, headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """
-        Make an HTTP request to OpenSearch with AWS IAM authentication.
+        Make an HTTP request to OpenSearch with authentication.
         
         Args:
             method (str): HTTP method (GET, POST, etc.)
@@ -192,32 +210,39 @@ class OpenSearchBaseManager:
         return request_headers
     
     def _execute_request(self, method: str, url: str, headers: Dict[str, str], data: Optional[Any] = None) -> requests.Response:
-        """Execute the HTTP request."""
-        if data is not None:
-            if isinstance(data, dict):
-                return requests.request(
-                    method=method,
-                    url=url,
-                    headers=headers,
-                    json=data,
-                    auth=self.auth,
-                    verify=self.verify_ssl
-                )
-            else:
-                return requests.request(
-                    method=method,
-                    url=url,
-                    headers=headers,
-                    data=data,
-                    auth=self.auth,
-                    verify=self.verify_ssl
-                )
-        else:
+        """
+        Execute the HTTP request with the appropriate authentication method.
+        
+        Args:
+            method (str): HTTP method
+            url (str): Request URL
+            headers (dict): Request headers
+            data (any, optional): Request data
+            
+        Returns:
+            requests.Response: The response from the request
+        """
+        # Determine if this is a bulk request based on content type
+        is_bulk_request = headers.get('Content-Type') == 'application/x-ndjson'
+        
+        if self.use_aws_auth:
+            # For AWS IAM authentication, use AWS4Auth
             return requests.request(
-                method=method,
-                url=url,
-                headers=headers,
+                method,
+                url,
                 auth=self.auth,
+                headers=headers,
+                data=data if is_bulk_request else (json.dumps(data) if data else None),
+                verify=self.verify_ssl
+            )
+        else:
+            # For username/password authentication, use basic auth
+            return requests.request(
+                method,
+                url,
+                auth=self.auth,
+                headers=headers,
+                data=data if is_bulk_request else (json.dumps(data) if data else None),
                 verify=self.verify_ssl
             )
     

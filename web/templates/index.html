@@ -85,76 +85,169 @@
         .ui-menu-item:hover {
             background-color: #f0f0f0;
         }
+        /* Tab styles */
+        .ui-tabs {
+            margin-bottom: 20px;
+        }
+        .ui-tabs-panel {
+            padding: 20px 0;
+        }
+        /* Boosting styles */
+        .boosting-container {
+            margin-top: 20px;
+        }
+        .boosting-field {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+        }
+        .boosting-field label {
+            flex: 1;
+            margin-right: 10px;
+        }
+        .boosting-field input[type="number"] {
+            width: 80px;
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .boosting-field input[type="number"]:focus {
+            border-color: #4CAF50;
+            outline: none;
+        }
+        .boosting-actions {
+            text-align: right;
+            margin-top: 20px;
+        }
+        .boosting-actions button {
+            padding: 8px 16px;
+            background-color: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .boosting-actions button:hover {
+            background-color: #1976D2;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Unicorn Member Search</h1>
         
-        <div class="search-container">
-            <div class="search-row">
-                <div class="search-field">
-                    <label for="global-search">Quick Search (Auto-complete)</label>
-                    <input type="text" id="global-search" placeholder="Enter at least 3 characters...">
+        <div id="tabs">
+            <ul>
+                <li><a href="#search-tab">Search</a></li>
+                <li><a href="#boosting-tab">Field Boosting</a></li>
+            </ul>
+            
+            <div id="search-tab">
+                <div class="search-container">
+                    <div class="search-row">
+                        <div class="search-field">
+                            <label for="global-search">Quick Search (Auto-complete)</label>
+                            <input type="text" id="global-search" placeholder="Enter at least 3 characters...">
+                        </div>
+                    </div>
+                    
+                    <div class="search-row">
+                        <div class="search-field">
+                            <label for="memberId">Member ID</label>
+                            <input type="text" id="memberId">
+                        </div>
+                        <div class="search-field">
+                            <label for="firstName">First Name</label>
+                            <input type="text" id="firstName">
+                        </div>
+                        <div class="search-field">
+                            <label for="lastName">Last Name</label>
+                            <input type="text" id="lastName">
+                        </div>
+                    </div>
+                    
+                    <div class="search-row">
+                        <div class="search-field">
+                            <label for="memberStatus">Member Status</label>
+                            <input type="text" id="memberStatus">
+                        </div>
+                        <div class="search-field">
+                            <label for="state">State</label>
+                            <input type="text" id="state">
+                        </div>
+                        <div class="search-field">
+                            <label for="fatherName">Father's Name</label>
+                            <input type="text" id="fatherName">
+                        </div>
+                    </div>
+                    
+                    <div class="search-row">
+                        <div class="search-field">
+                            <label for="email1">Email</label>
+                            <input type="text" id="email1">
+                        </div>
+                    </div>
+                    
+                    <div class="search-button">
+                        <button id="search-btn">Search</button>
+                        <button id="reset-btn">Reset</button>
+                    </div>
                 </div>
+                
+                <table id="results-table" class="display">
+                    <thead>
+                        <tr>
+                            <th>Member ID</th>
+                            <th>First Name</th>
+                            <th>Last Name</th>
+                            <th>Member Status</th>
+                            <th>State</th>
+                            <th>Father's Name</th>
+                            <th>Email</th>
+                        </tr>
+                    </thead>
+                </table>
             </div>
             
-            <div class="search-row">
-                <div class="search-field">
-                    <label for="memberId">Member ID</label>
-                    <input type="text" id="memberId">
+            <div id="boosting-tab">
+                <div class="boosting-container">
+                    <div class="boosting-field">
+                        <label for="memberId-boost">Member ID</label>
+                        <input type="number" id="memberId-boost" min="1" max="10" step="0.1" value="1">
+                    </div>
+                    <div class="boosting-field">
+                        <label for="firstName-boost">First Name</label>
+                        <input type="number" id="firstName-boost" min="1" max="10" step="0.1" value="1">
+                    </div>
+                    <div class="boosting-field">
+                        <label for="lastName-boost">Last Name</label>
+                        <input type="number" id="lastName-boost" min="1" max="10" step="0.1" value="1">
+                    </div>
+                    <div class="boosting-field">
+                        <label for="memberStatus-boost">Member Status</label>
+                        <input type="number" id="memberStatus-boost" min="1" max="10" step="0.1" value="1">
+                    </div>
+                    <div class="boosting-field">
+                        <label for="state-boost">State</label>
+                        <input type="number" id="state-boost" min="1" max="10" step="0.1" value="1">
+                    </div>
+                    <div class="boosting-field">
+                        <label for="fatherName-boost">Father's Name</label>
+                        <input type="number" id="fatherName-boost" min="1" max="10" step="0.1" value="1">
+                    </div>
+                    <div class="boosting-field">
+                        <label for="email1-boost">Email</label>
+                        <input type="number" id="email1-boost" min="1" max="10" step="0.1" value="1">
+                    </div>
+                    <div class="boosting-actions">
+                        <button id="save-boosting-btn">Save Boosting Values</button>
+                    </div>
                 </div>
-                <div class="search-field">
-                    <label for="firstName">First Name</label>
-                    <input type="text" id="firstName">
-                </div>
-                <div class="search-field">
-                    <label for="lastName">Last Name</label>
-                    <input type="text" id="lastName">
-                </div>
-            </div>
-            
-            <div class="search-row">
-                <div class="search-field">
-                    <label for="memberStatus">Member Status</label>
-                    <input type="text" id="memberStatus">
-                </div>
-                <div class="search-field">
-                    <label for="state">State</label>
-                    <input type="text" id="state">
-                </div>
-                <div class="search-field">
-                    <label for="fatherName">Father's Name</label>
-                    <input type="text" id="fatherName">
-                </div>
-            </div>
-            
-            <div class="search-row">
-                <div class="search-field">
-                    <label for="email1">Email</label>
-                    <input type="text" id="email1">
-                </div>
-            </div>
-            
-            <div class="search-button">
-                <button id="search-btn">Search</button>
-                <button id="reset-btn">Reset</button>
             </div>
         </div>
-        
-        <table id="results-table" class="display">
-            <thead>
-                <tr>
-                    <th>Member ID</th>
-                    <th>First Name</th>
-                    <th>Last Name</th>
-                    <th>Member Status</th>
-                    <th>State</th>
-                    <th>Father's Name</th>
-                    <th>Email</th>
-                </tr>
-            </thead>
-        </table>
     </div>
 
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
@@ -163,6 +256,9 @@
     <script src="https://cdn.datatables.net/1.11.5/js/dataTables.jqueryui.min.js"></script>
     <script>
         $(document).ready(function() {
+            // Initialize tabs
+            $("#tabs").tabs();
+            
             let dataTable = $('#results-table').DataTable({
                 columns: [
                     { data: 'memberId' },
@@ -179,6 +275,9 @@
                     emptyTable: "No records found. Please perform a search."
                 }
             });
+
+            // Load boosting values when the page loads
+            loadBoostingValues();
 
             $('#global-search').autocomplete({
                 source: function(request, response) {
@@ -269,6 +368,32 @@
                 loadDefaultData();
             });
 
+            // Save boosting values
+            $('#save-boosting-btn').click(function() {
+                const boostingValues = {
+                    memberId: parseFloat($('#memberId-boost').val()),
+                    firstName: parseFloat($('#firstName-boost').val()),
+                    lastName: parseFloat($('#lastName-boost').val()),
+                    memberStatus: parseFloat($('#memberStatus-boost').val()),
+                    state: parseFloat($('#state-boost').val()),
+                    fatherName: parseFloat($('#fatherName-boost').val()),
+                    email1: parseFloat($('#email1-boost').val())
+                };
+
+                $.ajax({
+                    url: '/api/save-boosting',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify(boostingValues),
+                    success: function(response) {
+                        alert('Boosting values saved successfully!');
+                    },
+                    error: function(xhr, status, error) {
+                        alert('Error saving boosting values: ' + error);
+                    }
+                });
+            });
+
             // Load default data when the page loads
             function loadDefaultData() {
                 $.ajax({
@@ -284,6 +409,24 @@
                     },
                     error: function(xhr, status, error) {
                         console.error("Error loading default data:", error);
+                    }
+                });
+            }
+
+            // Load boosting values
+            function loadBoostingValues() {
+                $.ajax({
+                    url: '/api/load-boosting',
+                    method: 'GET',
+                    success: function(response) {
+                        if (response) {
+                            Object.keys(response).forEach(field => {
+                                $(`#${field}-boost`).val(response[field]);
+                            });
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        console.error("Error loading boosting values:", error);
                     }
                 });
             }
