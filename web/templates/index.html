@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="https://code.jquery.com/ui/1.12.1/themes/base/jquery-ui.css">
     <link rel="stylesheet" href="https://cdn.datatables.net/1.11.5/css/jquery.dataTables.min.css">
     <link rel="stylesheet" href="https://cdn.datatables.net/1.11.5/css/dataTables.jqueryui.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -133,6 +134,39 @@
         .boosting-actions button:hover {
             background-color: #1976D2;
         }
+        .boosting-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .field-boost {
+            flex: 1;
+            min-width: 200px;
+        }
+        .field-boost label {
+            display: block;
+            margin-bottom: 5px;
+            color: #666;
+        }
+        .field-boost input[type="range"] {
+            width: 100%;
+        }
+        .boost-value {
+            display: block;
+            text-align: right;
+            margin-top: 5px;
+        }
+        .result-type-icon {
+            font-size: 1.2em;
+            margin-right: 5px;
+        }
+        .member-icon {
+            color: #4CAF50;
+        }
+        .policy-icon {
+            color: #2196F3;
+        }
     </style>
 </head>
 <body>
@@ -141,8 +175,9 @@
         
         <div id="tabs">
             <ul>
-                <li><a href="#search-tab">Search</a></li>
+                <li><a href="#search-tab">Member Search</a></li>
                 <li><a href="#boosting-tab">Field Boosting</a></li>
+                <li><a href="#combined-search-tab">Combined Search</a></li>
             </ul>
             
             <div id="search-tab">
@@ -242,10 +277,41 @@
                         <label for="email1-boost">Email</label>
                         <input type="number" id="email1-boost" min="1" max="10" step="0.1" value="1">
                     </div>
+                    <div class="boosting-controls">
+                        <div class="field-boost">
+                            <label for="fullName-boost">Full Name:</label>
+                            <input type="number" id="fullName-boost" min="1" max="10" value="1" step="0.1">
+                            <span class="boost-value">1.0</span>
+                        </div>
+                    </div>
                     <div class="boosting-actions">
                         <button id="save-boosting-btn">Save Boosting Values</button>
                     </div>
                 </div>
+            </div>
+            
+            <div id="combined-search-tab">
+                <div class="search-container">
+                    <div class="search-row">
+                        <div class="search-field">
+                            <label for="combined-search">Quick Search (Auto-complete)</label>
+                            <input type="text" id="combined-search" placeholder="Enter at least 3 characters...">
+                        </div>
+                    </div>
+                </div>
+                
+                <table id="combined-results-table" class="display">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>ID</th>
+                            <th>Name</th>
+                            <th>Status</th>
+                            <th>State</th>
+                            <th>Email</th>
+                        </tr>
+                    </thead>
+                </table>
             </div>
         </div>
     </div>
@@ -259,20 +325,31 @@
             // Initialize tabs
             $("#tabs").tabs();
             
+            // Initialize the data table
             let dataTable = $('#results-table').DataTable({
                 columns: [
-                    { data: 'memberId' },
-                    { data: 'firstName' },
-                    { data: 'lastName' },
-                    { data: 'memberStatus' },
-                    { data: 'state' },
-                    { data: 'fatherName' },
-                    { data: 'email1' }
+                    { data: 'memberId', title: 'Member ID' },
+                    { data: 'firstName', title: 'First Name' },
+                    { data: 'lastName', title: 'Last Name' },
+                    { data: 'memberStatus', title: 'Member Status' },
+                    { data: 'state', title: 'State' },
+                    { data: 'fatherName', title: 'Father\'s Name' },
+                    { data: 'email1', title: 'Email' }
                 ],
                 pageLength: 10,
                 order: [[1, 'asc']],
                 language: {
                     emptyTable: "No records found. Please perform a search."
+                },
+                processing: true,
+                serverSide: false,
+                ajax: {
+                    url: '/api/default-search',
+                    dataSrc: function(json) {
+                        return json.hits.hits.map(function(hit) {
+                            return hit._source;
+                        });
+                    }
                 }
             });
 
@@ -343,11 +420,18 @@
                     contentType: 'application/json',
                     data: JSON.stringify(searchData),
                     success: function(response) {
-                        const hits = response.hits.hits.map(hit => hit._source);
-                        dataTable.clear().rows.add(hits).draw();
+                        if (response.hits && response.hits.hits) {
+                            const hits = response.hits.hits.map(hit => hit._source);
+                            dataTable.clear().rows.add(hits).draw();
+                        } else {
+                            console.error("Invalid response format:", response);
+                            dataTable.clear().draw();
+                        }
                     },
                     error: function(xhr, status, error) {
+                        console.error("Search error:", error);
                         alert('Error performing search: ' + error);
+                        dataTable.clear().draw();
                     }
                 });
             });
@@ -377,7 +461,8 @@
                     memberStatus: parseFloat($('#memberStatus-boost').val()),
                     state: parseFloat($('#state-boost').val()),
                     fatherName: parseFloat($('#fatherName-boost').val()),
-                    email1: parseFloat($('#email1-boost').val())
+                    email1: parseFloat($('#email1-boost').val()),
+                    fullName: parseFloat($('#fullName-boost').val())
                 };
 
                 $.ajax({
@@ -433,6 +518,84 @@
             
             // Call the function to load default data
             loadDefaultData();
+
+            // Initialize combined results table
+            let combinedDataTable = $('#combined-results-table').DataTable({
+                columns: [
+                    { 
+                        data: 'type',
+                        render: function(data) {
+                            const icon = data === 'member' ? 
+                                '<i class="fas fa-user result-type-icon member-icon"></i>' : 
+                                '<i class="fas fa-file-contract result-type-icon policy-icon"></i>';
+                            return icon + data.charAt(0).toUpperCase() + data.slice(1);
+                        }
+                    },
+                    { data: 'id' },
+                    { data: 'name' },
+                    { data: 'status' },
+                    { data: 'state' },
+                    { data: 'email' }
+                ],
+                pageLength: 10,
+                order: [[1, 'asc']],
+                language: {
+                    emptyTable: "No records found. Please perform a search."
+                }
+            });
+
+            // Combined search autocomplete
+            $('#combined-search').autocomplete({
+                source: function(request, response) {
+                    if (request.term.length >= 3) {
+                        console.log("Combined autocomplete request for: " + request.term);
+                        $.ajax({
+                            url: '/api/combined-autocomplete',
+                            method: 'GET',
+                            data: { query: request.term },
+                            success: function(data) {
+                                console.log("Combined autocomplete response:", data);
+                                if (Array.isArray(data)) {
+                                    response(data);
+                                } else if (data.error) {
+                                    console.error("Combined autocomplete error:", data.error);
+                                    response([]);
+                                } else {
+                                    console.error("Invalid combined autocomplete response format:", data);
+                                    response([]);
+                                }
+                            },
+                            error: function(xhr, status, error) {
+                                console.error("Combined autocomplete error:", error);
+                                response([]);
+                            }
+                        });
+                    } else {
+                        response([]);
+                    }
+                },
+                minLength: 3,
+                select: function(event, ui) {
+                    console.log("Selected item:", ui.item);
+                    if (ui.item.type === 'policy') {
+                        // For policy items, navigate to the plan page
+                        const policyData = encodeURIComponent(JSON.stringify(ui.item));
+                        window.location.href = `/plan?data=${policyData}`;
+                    } else if (ui.item.type === 'member') {
+                        // For member items, navigate to the member details page
+                        const memberData = encodeURIComponent(JSON.stringify(ui.item));
+                        window.location.href = `/member-details?data=${memberData}`;
+                    }
+                    return false;
+                }
+            }).data("ui-autocomplete")._renderItem = function(ul, item) {
+                const icon = item.type === 'member' ? 
+                    '<i class="fas fa-user result-type-icon member-icon"></i>' : 
+                    '<i class="fas fa-file-contract result-type-icon policy-icon"></i>';
+                return $("<li>")
+                    .append(`<div>${icon} ${item.label}</div>`)
+                    .appendTo(ul);
+            };
         });
     </script>
 </body>

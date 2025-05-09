@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Member Details</title>
+    <link rel="stylesheet" href="https://code.jquery.com/ui/1.12.1/themes/base/jquery-ui.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .member-header {
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .member-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .info-group {
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .info-group h3 {
+            color: #2196F3;
+            margin-top: 0;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+        }
+        .info-item {
+            margin-bottom: 10px;
+        }
+        .info-label {
+            font-weight: bold;
+            color: #666;
+            margin-right: 10px;
+        }
+        .back-button {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #2196F3;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .back-button:hover {
+            background-color: #1976D2;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 0.9em;
+            font-weight: bold;
+        }
+        .status-active {
+            background-color: #4CAF50;
+            color: white;
+        }
+        .status-terminated {
+            background-color: #f44336;
+            color: white;
+        }
+        .status-pending {
+            background-color: #FFC107;
+            color: black;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-button">
+            <i class="fas fa-arrow-left"></i> Back to Search
+        </a>
+        
+        <h1>
+            <i class="fas fa-user"></i>
+            Member Details
+        </h1>
+
+        <div class="member-header">
+            <div class="info-group">
+                <h3>Basic Information</h3>
+                <div class="info-item">
+                    <span class="info-label">Member ID:</span>
+                    <span id="member-id"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Full Name:</span>
+                    <span id="full-name"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Status:</span>
+                    <span id="member-status"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Group ID:</span>
+                    <span id="group-id"></span>
+                </div>
+            </div>
+        </div>
+
+        <div class="member-info">
+            <div class="info-group">
+                <h3>Personal Information</h3>
+                <div class="info-item">
+                    <span class="info-label">Date of Birth:</span>
+                    <span id="date-of-birth"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Gender:</span>
+                    <span id="gender"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Marital Status:</span>
+                    <span id="marital-status"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Employment Status:</span>
+                    <span id="employment-status"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Preferred Language:</span>
+                    <span id="preferred-language"></span>
+                </div>
+            </div>
+
+            <div class="info-group">
+                <h3>Contact Information</h3>
+                <div class="info-item">
+                    <span class="info-label">Primary Email:</span>
+                    <span id="email1"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Secondary Email:</span>
+                    <span id="email2"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Primary Phone:</span>
+                    <span id="phone1"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Secondary Phone:</span>
+                    <span id="phone2"></span>
+                </div>
+            </div>
+
+            <div class="info-group">
+                <h3>Address Information</h3>
+                <div class="info-item">
+                    <span class="info-label">Address Line 1:</span>
+                    <span id="address-line1"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Address Line 2:</span>
+                    <span id="address-line2"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">City:</span>
+                    <span id="city"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">State:</span>
+                    <span id="state"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">ZIP Code:</span>
+                    <span id="zipcode"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Country:</span>
+                    <span id="country"></span>
+                </div>
+            </div>
+
+            <div class="info-group">
+                <h3>Family Information</h3>
+                <div class="info-item">
+                    <span class="info-label">Father's Name:</span>
+                    <span id="father-name"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Mother's Name:</span>
+                    <span id="mother-name"></span>
+                </div>
+            </div>
+
+            <div class="info-group">
+                <h3>Policy Information</h3>
+                <div class="info-item">
+                    <span class="info-label">Policy Number:</span>
+                    <span id="policy-number"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Coverage Start Date:</span>
+                    <span id="coverage-start"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Coverage End Date:</span>
+                    <span id="coverage-end"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            // Get member data from URL parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            const memberData = JSON.parse(decodeURIComponent(urlParams.get('data')));
+
+            // Populate basic information
+            $('#member-id').text(memberData.memberId);
+            $('#full-name').text(`${memberData.firstName} ${memberData.lastName}`);
+            
+            // Add status badge
+            const statusClass = memberData.memberStatus === 'Active' ? 'status-active' : 'status-inactive';
+            $('#member-status').html(`<span class="status-badge ${statusClass}">${memberData.memberStatus}</span>`);
+
+            // Populate personal information
+            $('#father-name').text(memberData.fatherName);
+            $('#date-of-birth').text(formatDate(memberData.dateOfBirth));
+            $('#gender').text(memberData.gender);
+            $('#marital-status').text(memberData.maritalStatus);
+
+            // Populate contact information
+            $('#email1').text(memberData.email1);
+            $('#email2').text(memberData.email2 || 'N/A');
+            $('#phone1').text(memberData.phoneNumber1);
+            $('#phone2').text(memberData.phoneNumber2 || 'N/A');
+
+            // Populate address information
+            $('#address-line1').text(memberData.addressLine1);
+            $('#address-line2').text(memberData.addressLine2 || 'N/A');
+            $('#city').text(memberData.city);
+            $('#state').text(memberData.state);
+            $('#zipcode').text(memberData.zipcode);
+            $('#country').text(memberData.country);
+
+            // Populate policy information
+            $('#group-id').text(memberData.groupId);
+            $('#policy-number').text(memberData.policyNumber);
+            $('#created-at').text(formatDate(memberData.created_at));
+            $('#updated-at').text(formatDate(memberData.updated_at));
+        });
+
+        function formatDate(dateString) {
+            if (!dateString) return 'N/A';
+            const date = new Date(dateString);
+            return date.toLocaleDateString();
+        }
+    </script>
+</body>
+</html> 

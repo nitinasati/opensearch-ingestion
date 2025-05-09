@@ -14,22 +14,26 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from opensearch_base_manager import OpenSearchBaseManager
 import json
 
-logger = logging.getLogger(__name__)
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Log startup message
+logger.info("Application starting up...")
 
 app = Flask(__name__)
 opensearch_manager = OpenSearchBaseManager()
 
 # Register cleanup function
 def cleanup():
-    print("Cleaning up resources...")
+    logger.info("Cleaning up resources...")
     # Add any cleanup code here if needed
 
 atexit.register(cleanup)
 
 # Handle signals for graceful shutdown
 def signal_handler(signum, frame):
-    print(f"Received signal {signum}")
+    logger.info(f"Received signal {signum}")
     cleanup()
     sys.exit(0)
 
@@ -118,12 +122,12 @@ def search():
                 }
             })
     
-    logger.debug(f"Search query: {json.dumps(query)}")
+    logger.info(f"Search query: {json.dumps(query, indent=2)}")
     
     try:
         response = opensearch_manager._make_request(
             method='POST',
-            path=f'/member_search_alias/_search',
+            path=f'/member_index_primary/_search',
             data=query
         )
         
@@ -174,30 +178,171 @@ def autocomplete():
         boosting_values = load_boosting_values()
         logger.info(f"Using boosting values: {boosting_values}")
         
-        # Create the autocomplete query with boosting
+        # Create the autocomplete query with wildcard search
         autocomplete_query = {
             "query": {
-                "multi_match": {
-                    "query": query,
-                    "type": "best_fields",
-                    "fields": [
-                        f"firstName^{boosting_values.get('firstName', 9)}",
-                        f"lastName^{boosting_values.get('lastName', 8)}",
-                        f"memberId^{boosting_values.get('memberId', 10)}",
-                        f"fatherName^{boosting_values.get('fatherName', 2)}",
-                        f"email1^{boosting_values.get('email1', 1)}",
-                        f"email2^{boosting_values.get('email2', 2)}",
-                        f"phoneNumber1^{boosting_values.get('phoneNumber1', 1)}",
-                        f"phoneNumber2^{boosting_values.get('phoneNumber2', 1)}",
-                        f"addressLine1^{boosting_values.get('addressLine1', 1)}",
-                        f"addressLine2^{boosting_values.get('addressLine2', 1)}",
-                        f"city^{boosting_values.get('city', 1)}",
-                        f"state^{boosting_values.get('state', 1)}",
-                        f"zipcode^{boosting_values.get('zipcode', 1)}",
-                        f"country^{boosting_values.get('country', 1)}",
-                        f"policyNumber^{boosting_values.get('policyNumber', 2)}",
-                        f"memberStatus^{boosting_values.get('memberStatus', 1)}"
-                    ]
+                "bool": {
+                    "should": [
+                        {
+                            "wildcard": {
+                                "fullName": {
+                                    "value": f"*{query}*",
+                                    "case_insensitive": True,
+                                    "boost": boosting_values.get('fullName', 10)
+                                }
+                            }
+                        },
+                        {
+                            "wildcard": {
+                                "firstName": {
+                                    "value": f"*{query}*",
+                                    "case_insensitive": True,
+                                    "boost": boosting_values.get('firstName', 9)
+                                }
+                            }
+                        },
+                        {
+                            "wildcard": {
+                                "lastName": {
+                                    "value": f"*{query}*",
+                                    "case_insensitive": True,
+                                    "boost": boosting_values.get('lastName', 8)
+                                }
+                            }
+                        },
+                        {
+                            "wildcard": {
+                                "memberId": {
+                                    "value": f"*{query}*",
+                                    "case_insensitive": True,
+                                    "boost": boosting_values.get('memberId', 10)
+                                }
+                            }
+                        },
+                        {
+                            "wildcard": {
+                                "fatherName": {
+                                    "value": f"*{query}*",
+                                    "case_insensitive": True,
+                                    "boost": boosting_values.get('fatherName', 2)
+                                }
+                            }
+                        },
+                        {
+                            "wildcard": {
+                                "email1": {
+                                    "value": f"*{query}*",
+                                    "case_insensitive": True,
+                                    "boost": boosting_values.get('email1', 1)
+                                }
+                            }
+                        },
+                        {
+                            "wildcard": {
+                                "email2": {
+                                    "value": f"*{query}*",
+                                    "case_insensitive": True,
+                                    "boost": boosting_values.get('email2', 2)
+                                }
+                            }
+                        },
+                        {
+                            "wildcard": {
+                                "phoneNumber1": {
+                                    "value": f"*{query}*",
+                                    "case_insensitive": True,
+                                    "boost": boosting_values.get('phoneNumber1', 1)
+                                }
+                            }
+                        },
+                        {
+                            "wildcard": {
+                                "phoneNumber2": {
+                                    "value": f"*{query}*",
+                                    "case_insensitive": True,
+                                    "boost": boosting_values.get('phoneNumber2', 1)
+                                }
+                            }
+                        },
+                        {
+                            "wildcard": {
+                                "addressLine1": {
+                                    "value": f"*{query}*",
+                                    "case_insensitive": True,
+                                    "boost": boosting_values.get('addressLine1', 1)
+                                }
+                            }
+                        },
+                        {
+                            "wildcard": {
+                                "addressLine2": {
+                                    "value": f"*{query}*",
+                                    "case_insensitive": True,
+                                    "boost": boosting_values.get('addressLine2', 1)
+                                }
+                            }
+                        },
+                        {
+                            "wildcard": {
+                                "city": {
+                                    "value": f"*{query}*",
+                                    "case_insensitive": True,
+                                    "boost": boosting_values.get('city', 1)
+                                }
+                            }
+                        },
+                        {
+                            "wildcard": {
+                                "state": {
+                                    "value": f"*{query}*",
+                                    "case_insensitive": True,
+                                    "boost": boosting_values.get('state', 1)
+                                }
+                            }
+                        },
+                        {
+                            "wildcard": {
+                                "zipcode": {
+                                    "value": f"*{query}*",
+                                    "case_insensitive": True,
+                                    "boost": boosting_values.get('zipcode', 1)
+                                }
+                            }
+                        },
+                        {
+                            "wildcard": {
+                                "country": {
+                                    "value": f"*{query}*",
+                                    "case_insensitive": True,
+                                    "boost": boosting_values.get('country', 1)
+                                }
+                            }
+                        },
+                        {
+                            "wildcard": {
+                                "policyNumber": {
+                                    "value": f"*{query}*",
+                                    "case_insensitive": True,
+                                    "boost": boosting_values.get('policyNumber', 2)
+                                }
+                            }
+                        },
+                        {
+                            "wildcard": {
+                                "memberStatus": {
+                                    "value": f"*{query}*",
+                                    "case_insensitive": True,
+                                    "boost": boosting_values.get('memberStatus', 1)
+                                }
+                            }
+                        }
+                    ],
+                    "minimum_should_match": 1,
+                    "filter": {
+                        "term": {
+                            "_index": "member_index_primary"
+                        }
+                    }
                 }
             },
             "size": 10
@@ -261,15 +406,24 @@ def default_search():
             mapping = mapping_response['response'].json()
             logger.info(f"Index mapping: {json.dumps(mapping, indent=2)}")
             
-            # Create a simple query without sorting
+            # Create a simple query with index filter
             default_query = {
                 "query": {
-                    "match_all": {}
+                    "bool": {
+                        "must": {
+                            "match_all": {}
+                        },
+                        "filter": {
+                            "term": {
+                                "_index": "member_index_primary"
+                            }
+                        }
+                    }
                 },
                 "size": 10
             }
             
-            logger.info(f"Sending default search query: {json.dumps(default_query, indent=2)}")
+            logger.info(f"Default search query: {json.dumps(default_query, indent=2)}")
             
             # Execute the query
             response = opensearch_manager._make_request('POST', '/member_search_alias/_search', default_query)
@@ -379,7 +533,8 @@ def load_boosting_values():
                 'memberStatus': 1.0,
                 'state': 1.0,
                 'fatherName': 1.0,
-                'email1': 1.0
+                'email1': 1.0,
+                'fullName': 1.0
             }
     except Exception as e:
         logger.error(f"Error loading boosting values: {str(e)}", exc_info=True)
@@ -390,8 +545,188 @@ def load_boosting_values():
             'memberStatus': 1.0,
             'state': 1.0,
             'fatherName': 1.0,
-            'email1': 1.0
+            'email1': 1.0,
+            'fullName': 1.0
         }
+
+@app.route('/api/combined-autocomplete')
+def combined_autocomplete():
+    query = request.args.get('query', '')
+    logger.info(f"Received combined autocomplete request for query: {query}")
+    
+    if not query or len(query) < 3:
+        logger.debug(f"Query too short for autocomplete: {len(query) if query else 0} characters")
+        return jsonify([])
+    
+    try:
+        # Check OpenSearch connection first
+        try:
+            health_check = opensearch_manager._make_request('GET', '/_cluster/health')
+            logger.info(f"Health check response: {health_check}")
+            if health_check['status'] == 'error':
+                logger.error(f"OpenSearch health check failed: {health_check['message']}")
+                return jsonify({"error": "OpenSearch service is not responding. Please try again later."}), 503
+            logger.debug(f"OpenSearch health check successful: {health_check['response'].json()}")
+        except Exception as e:
+            logger.error(f"Failed to connect to OpenSearch: {str(e)}", exc_info=True)
+            return jsonify({"error": "Cannot connect to OpenSearch service. Please check the connection."}), 503
+
+        # Verify index exists
+        try:
+            if not opensearch_manager._verify_index_exists('member_search_alias'):
+                logger.error("Index 'member_search_alias' does not exist or is not accessible")
+                return jsonify({"error": "Search index is not available. Please contact support."}), 404
+            logger.debug("Index verification successful")
+        except Exception as e:
+            logger.error(f"Index verification failed: {str(e)}", exc_info=True)
+            return jsonify({"error": "Error verifying search index. Please contact support."}), 500
+        
+        # Load boosting values
+        boosting_values = load_boosting_values()
+        logger.info(f"Using boosting values: {boosting_values}")
+        
+        # Create the autocomplete query with boosting
+        autocomplete_query = {
+            "query": {
+                "multi_match": {
+                    "query": f"*{query}*",
+                    "type": "best_fields",
+                    "fields": [
+                        # Member fields
+                        f"fullName^{boosting_values.get('fullName', 10)}",
+                        f"firstName^{boosting_values.get('firstName', 9)}",
+                        f"lastName^{boosting_values.get('lastName', 8)}",
+                        f"memberId^{boosting_values.get('memberId', 10)}",
+                        f"fatherName^{boosting_values.get('fatherName', 2)}",
+                        f"email1^{boosting_values.get('email1', 2)}",
+                        f"email2^{boosting_values.get('email2', 2)}",
+                        f"phoneNumber1^{boosting_values.get('phoneNumber1', 1)}",
+                        f"phoneNumber2^{boosting_values.get('phoneNumber2', 1)}",
+                        f"addressLine1^{boosting_values.get('addressLine1', 1)}",
+                        f"addressLine2^{boosting_values.get('addressLine2', 1)}",
+                        f"city^{boosting_values.get('city', 1)}",
+                        f"state^{boosting_values.get('state', 1)}",
+                        f"zipcode^{boosting_values.get('zipcode', 1)}",
+                        f"country^{boosting_values.get('country', 1)}",
+                        f"memberStatus^{boosting_values.get('memberStatus', 1)}",
+                        # Policy fields
+                        f"employer_id^{boosting_values.get('employer_id', 10)}",
+                        f"employer_name^{boosting_values.get('employer_name', 8)}",
+                        f"group_policy_number^{boosting_values.get('group_policy_number', 10)}",
+                        f"policy_status^{boosting_values.get('policy_status', 2)}",
+                        f"product_type^{boosting_values.get('product_type', 2)}",
+                        f"broker_name^{boosting_values.get('broker_name', 2)}",
+                        f"industry^{boosting_values.get('industry', 1)}"
+                    ]
+                }
+            },
+            "size": 10
+        }
+        
+        # Execute the query
+        response = opensearch_manager._make_request(
+            'POST',
+            '/member_search_alias/_search',
+            data=autocomplete_query
+        )
+        
+        if response['status'] == 'error':
+            logger.error(f"Error in combined search: {response['message']}")
+            return jsonify({"error": f"Search error: {response['message']}"}), 500
+        
+        response_data = response['response'].json()
+        hits = response_data.get('hits', {}).get('hits', [])
+        total_hits = response_data.get('hits', {}).get('total', {}).get('value', 0)
+        logger.info(f"Combined search results: {total_hits} hits")
+        
+        suggestions = []
+        for hit in hits:
+            source = hit.get('_source', {})
+            # Determine if it's a member or policy record
+            is_member = 'memberId' in source
+            is_policy = 'employer_id' in source
+            
+            if is_member:
+                suggestion = {
+                    'type': 'member',
+                    'value': source.get('memberId', ''),
+                    'label': f"{source.get('firstName', '')} {source.get('lastName', '')} ({source.get('memberId', '')})",
+                    'id': source.get('memberId', ''),
+                    'name': f"{source.get('firstName', '')} {source.get('lastName', '')}",
+                    'status': source.get('memberStatus', ''),
+                    'state': source.get('state', ''),
+                    'email': source.get('email1', ''),
+                    'memberId': source.get('memberId', ''),
+                    'firstName': source.get('firstName', ''),
+                    'lastName': source.get('lastName', ''),
+                    'memberStatus': source.get('memberStatus', ''),
+                    'state': source.get('state', ''),
+                    'fatherName': source.get('fatherName', ''),
+                    'email1': source.get('email1', ''),
+                    'email2': source.get('email2', ''),
+                    'phoneNumber1': source.get('phoneNumber1', ''),
+                    'phoneNumber2': source.get('phoneNumber2', ''),
+                    'addressLine1': source.get('addressLine1', ''),
+                    'addressLine2': source.get('addressLine2', ''),
+                    'city': source.get('city', ''),
+                    'zipcode': source.get('zipcode', ''),
+                    'country': source.get('country', ''),
+                    'dateOfBirth': source.get('dateOfBirth', ''),
+                    'gender': source.get('gender', ''),
+                    'maritalStatus': source.get('maritalStatus', ''),
+                    'groupId': source.get('groupId', ''),
+                    'policyNumber': source.get('policyNumber', ''),
+                    'created_at': source.get('created_at', ''),
+                    'updated_at': source.get('updated_at', '')
+                }
+                logger.info(f"Created member suggestion: {json.dumps(suggestion, indent=2)}")
+            elif is_policy:
+                suggestion = {
+                    'type': 'policy',
+                    'value': source.get('employer_id', ''),
+                    'label': f"{source.get('employer_name', '')} ({source.get('group_policy_number', '')})",
+                    'id': source.get('employer_id', ''),
+                    'name': source.get('employer_name', ''),
+                    'status': source.get('policy_status', ''),
+                    'policy_number': source.get('group_policy_number', ''),
+                    'product_type': source.get('product_type', ''),
+                    'broker': source.get('broker_name', ''),
+                    'employer_id': source.get('employer_id', ''),
+                    'employer_name': source.get('employer_name', ''),
+                    'group_policy_number': source.get('group_policy_number', ''),
+                    'policy_status': source.get('policy_status', ''),
+                    'product_type': source.get('product_type', ''),
+                    'broker_name': source.get('broker_name', ''),
+                    'industry': source.get('industry', ''),
+                    'policy_effective_date': source.get('policy_effective_date', ''),
+                    'policy_end_date': source.get('policy_end_date', ''),
+                    'created_at': source.get('created_at', ''),
+                    'updated_at': source.get('updated_at', ''),
+                    'coverage_classes': source.get('coverage_classes', [])
+                }
+                logger.info(f"Created policy suggestion: {json.dumps(suggestion, indent=2)}")
+            else:
+                logger.warning(f"Unknown record type: {json.dumps(source, indent=2)}")
+                continue
+                
+            suggestions.append(suggestion)
+        
+        logger.info(f"Returning {len(suggestions)} suggestions")
+        return jsonify(suggestions)
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in combined search: {str(e)}", exc_info=True)
+        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+
+@app.route('/plan')
+def plan():
+    """Render the policy details page."""
+    return render_template('plan.html')
+
+@app.route('/member-details')
+def member_details():
+    """Render the member details page."""
+    return render_template('member-details.html')
 
 if __name__ == '__main__':
     # Use threaded=False to avoid the threading issue
