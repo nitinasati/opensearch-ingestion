@@ -1,0 +1,61 @@
+PUT /employer_policy
+{
+  "mappings": {
+    "properties": {
+      "employer_id": {
+        "type": "keyword"
+      },
+      "employer_name": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" }
+        }
+      },
+      "industry": {
+        "type": "keyword"
+      },
+      "group_policy_number": {
+        "type": "keyword"
+      },
+      "policy_status": {
+        "type": "keyword"  
+      },
+      "policy_effective_date": {
+        "type": "date"
+      },
+      "policy_end_date": {
+        "type": "date"
+      },
+      "product_type": {
+        "type": "keyword"  
+      },
+      "coverage_classes": {
+        "type": "nested",
+        "properties": {
+          "class_code": { "type": "keyword" },    
+          "class_description": {
+            "type": "text",
+            "fields": {
+              "raw": { "type": "keyword" }
+            }
+          },
+          "coverage_amount": { "type": "double" },
+          "eligibility_criteria": { "type": "text" },
+          "waiting_period_days": { "type": "integer" }
+        }
+      },
+      "broker_name": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" }
+        }
+      },
+      "created_at": {
+        "type": "date"
+      },
+      "updated_at": {
+        "type": "date"
+      }
+    }
+  }
+}
