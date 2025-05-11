@@ -224,6 +224,10 @@
                             <label for="email1">Email</label>
                             <input type="text" id="email1">
                         </div>
+                        <div class="search-field">
+                            <label for="dateOfBirth">Date of Birth</label>
+                            <input type="date" id="dateOfBirth">
+                        </div>
                     </div>
                     
                     <div class="search-button">
@@ -242,6 +246,7 @@
                             <th>State</th>
                             <th>Father's Name</th>
                             <th>Email</th>
+                            <th>Date of Birth</th>
                         </tr>
                     </thead>
                 </table>
@@ -320,19 +325,6 @@
                         </div>
                     </div>
                 </div>
-                
-                <table id="combined-results-table" class="display">
-                    <thead>
-                        <tr>
-                            <th>Type</th>
-                            <th>ID</th>
-                            <th>Name</th>
-                            <th>Status</th>
-                            <th>State</th>
-                            <th>Email</th>
-                        </tr>
-                    </thead>
-                </table>
             </div>
         </div>
     </div>
@@ -355,7 +347,17 @@
                     { data: 'memberStatus', title: 'Member Status' },
                     { data: 'state', title: 'State' },
                     { data: 'fatherName', title: 'Father\'s Name' },
-                    { data: 'email1', title: 'Email' }
+                    { data: 'email1', title: 'Email' },
+                    { 
+                        data: 'dateOfBirth',
+                        title: 'Date of Birth',
+                        render: function(data) {
+                            if (!data) return '';
+                            // Parse the date and adjust for timezone
+                            const date = new Date(data + 'T00:00:00');
+                            return date.toISOString().split('T')[0];
+                        }
+                    }
                 ],
                 pageLength: 10,
                 order: [[1, 'asc']],
@@ -433,8 +435,11 @@
                     memberStatus: $('#memberStatus').val(),
                     state: $('#state').val(),
                     fatherName: $('#fatherName').val(),
-                    email1: $('#email1').val()
+                    email1: $('#email1').val(),
+                    dateOfBirth: $('#dateOfBirth').val() ? $('#dateOfBirth').val() : ''
                 };
+
+                console.log('Search data:', searchData);  // Debug log
 
                 $.ajax({
                     url: '/api/search',

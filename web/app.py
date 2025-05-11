@@ -91,10 +91,10 @@ def search():
         'memberStatus': data.get('memberStatus', ''),
         'state': data.get('state', ''),
         'fatherName': data.get('fatherName', ''),
-        'email1': data.get('email1', '')
+        'email1': data.get('email1', ''),
+        'dateOfBirth': data.get('dateOfBirth', '')
     }
     
-   
     # Build the search query
     query = {
         "query": {
@@ -108,14 +108,27 @@ def search():
     # Add search conditions for non-empty fields
     for field, value in search_params.items():
         if value:
-            query["query"]["bool"]["must"].append({
-                "wildcard": {
-                    field: {
-                        "value": f"{value.lower()}*",
-                        "case_insensitive": True
+            if field == 'dateOfBirth' and value.strip():
+                # Handle date field with range query
+                logger.info(f"Adding date of birth range filter: {value}")
+                query["query"]["bool"]["must"].append({
+                    "range": {
+                        "dateOfBirth": {
+                            "gte": value,
+                            "lte": value
+                        }
                     }
-                }
-            })
+                })
+            elif field != 'dateOfBirth':  # Skip empty dateOfBirth
+                # Handle text fields with wildcard
+                query["query"]["bool"]["must"].append({
+                    "wildcard": {
+                        field: {
+                            "value": f"{value.lower()}*",
+                            "case_insensitive": True
+                        }
+                    }
+                })
     
     logger.info(f"Search query: {json.dumps(query, indent=2)}")
     
