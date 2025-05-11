@@ -13,7 +13,7 @@ htmlcov/
 *.log
 
 # Data files
-*.json
+
 *.csv
 
 # SonarQube files

@@ -45,7 +45,7 @@ def verify_index():
         # Check if index exists
         response = opensearch_manager._make_request(
             method='GET',
-            path='/member_search_alias'
+            path='/smart_search_alias'
         )
         logger.info(f"Index verification response: {response}")
         return response.get('status') == 'success'
@@ -58,7 +58,7 @@ def get_mappings():
     try:
         response = opensearch_manager._make_request(
             method='GET',
-            path='/member_search_alias/_mapping'
+            path='/smart_search_alias/_mapping'
         )
         logger.info(f"Mapping response: {response}")
         return jsonify(response.get('response').json())
@@ -71,7 +71,7 @@ def index():
     logger.info("Rendering index page")
     if not verify_index():
         logger.error("Index verification failed")
-        return "Error: member_search_alias does not exist or is not accessible", 500
+        return "Error: smart_search_alias does not exist or is not accessible", 500
     return render_template('index.html')
 
 @app.route('/api/search', methods=['POST'])
@@ -79,7 +79,7 @@ def search():
     logger.info("Received search request")
     if not verify_index():
         logger.error("Index verification failed during search")
-        return jsonify({"error": "Index member_search_alias does not exist or is not accessible"}), 500
+        return jsonify({"error": "Index smart_search_alias does not exist or is not accessible"}), 500
 
     data = request.json
     logger.debug(f"Search parameters: {data}")
@@ -94,10 +94,7 @@ def search():
         'email1': data.get('email1', '')
     }
     
-    # Load boosting values
-    boosting_values = load_boosting_values()
-    logger.debug(f"Using boosting values: {boosting_values}")
-    
+   
     # Build the search query
     query = {
         "query": {
@@ -111,13 +108,11 @@ def search():
     # Add search conditions for non-empty fields
     for field, value in search_params.items():
         if value:
-            boost_value = boosting_values.get(field, 1.0)
             query["query"]["bool"]["must"].append({
-                "term": {
+                "wildcard": {
                     field: {
-                        "value": value,
-                        "case_insensitive": True,
-                        "boost": boost_value
+                        "value": f"{value.lower()}*",
+                        "case_insensitive": True
                     }
                 }
             })
@@ -127,7 +122,7 @@ def search():
     try:
         response = opensearch_manager._make_request(
             method='POST',
-            path=f'/member_index_primary/_search',
+            path=f'/member/_search',
             data=query
         )
         
@@ -166,8 +161,8 @@ def autocomplete():
 
         # Verify index exists
         try:
-            if not opensearch_manager._verify_index_exists('member_search_alias'):
-                logger.error("Index 'member_search_alias' does not exist or is not accessible")
+            if not opensearch_manager._verify_index_exists('smart_search_alias'):
+                logger.error("Index 'smart_search_alias' does not exist or is not accessible")
                 return jsonify({"error": "Search index is not available. Please contact support."}), 404
             logger.debug("Index verification successful")
         except Exception as e:
@@ -178,171 +173,35 @@ def autocomplete():
         boosting_values = load_boosting_values()
         logger.info(f"Using boosting values: {boosting_values}")
         
-        # Create the autocomplete query with wildcard search
+        # Create the autocomplete query with boosting
         autocomplete_query = {
             "query": {
-                "bool": {
-                    "should": [
-                        {
-                            "wildcard": {
-                                "fullName": {
-                                    "value": f"*{query}*",
-                                    "case_insensitive": True,
-                                    "boost": boosting_values.get('fullName', 10)
-                                }
-                            }
-                        },
-                        {
-                            "wildcard": {
-                                "firstName": {
-                                    "value": f"*{query}*",
-                                    "case_insensitive": True,
-                                    "boost": boosting_values.get('firstName', 9)
-                                }
-                            }
-                        },
-                        {
-                            "wildcard": {
-                                "lastName": {
-                                    "value": f"*{query}*",
-                                    "case_insensitive": True,
-                                    "boost": boosting_values.get('lastName', 8)
-                                }
-                            }
-                        },
-                        {
-                            "wildcard": {
-                                "memberId": {
-                                    "value": f"*{query}*",
-                                    "case_insensitive": True,
-                                    "boost": boosting_values.get('memberId', 10)
-                                }
-                            }
-                        },
-                        {
-                            "wildcard": {
-                                "fatherName": {
-                                    "value": f"*{query}*",
-                                    "case_insensitive": True,
-                                    "boost": boosting_values.get('fatherName', 2)
-                                }
-                            }
-                        },
-                        {
-                            "wildcard": {
-                                "email1": {
-                                    "value": f"*{query}*",
-                                    "case_insensitive": True,
-                                    "boost": boosting_values.get('email1', 1)
-                                }
-                            }
-                        },
-                        {
-                            "wildcard": {
-                                "email2": {
-                                    "value": f"*{query}*",
-                                    "case_insensitive": True,
-                                    "boost": boosting_values.get('email2', 2)
-                                }
-                            }
-                        },
-                        {
-                            "wildcard": {
-                                "phoneNumber1": {
-                                    "value": f"*{query}*",
-                                    "case_insensitive": True,
-                                    "boost": boosting_values.get('phoneNumber1', 1)
-                                }
-                            }
-                        },
-                        {
-                            "wildcard": {
-                                "phoneNumber2": {
-                                    "value": f"*{query}*",
-                                    "case_insensitive": True,
-                                    "boost": boosting_values.get('phoneNumber2', 1)
-                                }
-                            }
-                        },
-                        {
-                            "wildcard": {
-                                "addressLine1": {
-                                    "value": f"*{query}*",
-                                    "case_insensitive": True,
-                                    "boost": boosting_values.get('addressLine1', 1)
-                                }
-                            }
-                        },
-                        {
-                            "wildcard": {
-                                "addressLine2": {
-                                    "value": f"*{query}*",
-                                    "case_insensitive": True,
-                                    "boost": boosting_values.get('addressLine2', 1)
-                                }
-                            }
-                        },
-                        {
-                            "wildcard": {
-                                "city": {
-                                    "value": f"*{query}*",
-                                    "case_insensitive": True,
-                                    "boost": boosting_values.get('city', 1)
-                                }
-                            }
-                        },
-                        {
-                            "wildcard": {
-                                "state": {
-                                    "value": f"*{query}*",
-                                    "case_insensitive": True,
-                                    "boost": boosting_values.get('state', 1)
-                                }
-                            }
-                        },
-                        {
-                            "wildcard": {
-                                "zipcode": {
-                                    "value": f"*{query}*",
-                                    "case_insensitive": True,
-                                    "boost": boosting_values.get('zipcode', 1)
-                                }
-                            }
-                        },
-                        {
-                            "wildcard": {
-                                "country": {
-                                    "value": f"*{query}*",
-                                    "case_insensitive": True,
-                                    "boost": boosting_values.get('country', 1)
-                                }
-                            }
-                        },
-                        {
-                            "wildcard": {
-                                "policyNumber": {
-                                    "value": f"*{query}*",
-                                    "case_insensitive": True,
-                                    "boost": boosting_values.get('policyNumber', 2)
-                                }
-                            }
-                        },
-                        {
-                            "wildcard": {
-                                "memberStatus": {
-                                    "value": f"*{query}*",
-                                    "case_insensitive": True,
-                                    "boost": boosting_values.get('memberStatus', 1)
-                                }
-                            }
-                        }
+                "multi_match": {
+                    "query": query,
+                    "type": "bool_prefix",
+                    "fields": [
+                        f"firstName.suggest^{boosting_values.get('firstName', 9)}",
+                        f"lastName.suggest^{boosting_values.get('lastName', 8)}",
+                        f"memberId^{boosting_values.get('memberId', 10)}",
+                        f"fatherName.suggest^{boosting_values.get('fatherName', 2)}",
+                        f"email1.suggest^{boosting_values.get('email1', 1)}",
+                        f"email2.suggest^{boosting_values.get('email2', 2)}",
+                        f"phoneNumber1^{boosting_values.get('phoneNumber1', 1)}",
+                        f"phoneNumber2^{boosting_values.get('phoneNumber2', 1)}",
+                        f"addressLine1.suggest^{boosting_values.get('addressLine1', 1)}",
+                        f"addressLine2.suggest^{boosting_values.get('addressLine2', 1)}",
+                        f"city.suggest^{boosting_values.get('city', 1)}",
+                        f"state.suggest^{boosting_values.get('state', 1)}",
+                        f"zipcode.suggest^{boosting_values.get('zipcode', 1)}",
+                        f"country.suggest^{boosting_values.get('country', 1)}",
+                        f"policyNumber^{boosting_values.get('policyNumber', 2)}",
+                        f"memberStatus^{boosting_values.get('memberStatus', 1)}",
+                        f"employer_name.suggest^{boosting_values.get('employer_name', 8)}",
+                        f"group_policy_number^{boosting_values.get('group_policy_number', 10)}",
+                        f"policy_status^{boosting_values.get('policy_status', 2)}",
+                        f"industry^{boosting_values.get('industry', 1)}"
                     ],
-                    "minimum_should_match": 1,
-                    "filter": {
-                        "term": {
-                            "_index": "member_index_primary"
-                        }
-                    }
+                    "operator": "or"
                 }
             },
             "size": 10
@@ -353,9 +212,14 @@ def autocomplete():
         # Execute the query
         response = opensearch_manager._make_request(
             'POST',
-            '/member_search_alias/_search',
+            '/smart_search_alias/_search',
             data=autocomplete_query,
-            headers={'Content-Type': 'application/json'}
+            headers={
+                'Content-Type': 'application/json',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
+            }
         )
         
         if response['status'] == 'error':
@@ -381,7 +245,12 @@ def autocomplete():
             }
             suggestions.append(suggestion)
         
-        return jsonify(suggestions)
+        # Add response headers to prevent caching
+        response = jsonify(suggestions)
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
         
     except Exception as e:
         logger.error(f"Unexpected error in autocomplete: {str(e)}", exc_info=True)
@@ -392,13 +261,13 @@ def default_search():
     """Default search endpoint to load initial records."""
     try:
         # Check if the index exists
-        if not opensearch_manager._verify_index_exists('member_search_alias'):
-            logger.error("Index 'member_search_alias' does not exist or is not accessible")
+        if not opensearch_manager._verify_index_exists('smart_search_alias'):
+            logger.error("Index 'smart_search_alias' does not exist or is not accessible")
             return jsonify({"error": "Search index is not available. Please contact support."})
         
         # Get the index mapping
         try:
-            mapping_response = opensearch_manager._make_request('GET', '/member_search_alias/_mapping')
+            mapping_response = opensearch_manager._make_request('GET', '/smart_search_alias/_mapping')
             if mapping_response['status'] == 'error':
                 logger.error(f"Error getting mapping: {mapping_response['message']}")
                 return jsonify({"error": "Error getting index mapping. Please contact support."})
@@ -415,7 +284,7 @@ def default_search():
                         },
                         "filter": {
                             "term": {
-                                "_index": "member_index_primary"
+                                "_index": "member"
                             }
                         }
                     }
@@ -426,7 +295,7 @@ def default_search():
             logger.info(f"Default search query: {json.dumps(default_query, indent=2)}")
             
             # Execute the query
-            response = opensearch_manager._make_request('POST', '/member_search_alias/_search', default_query)
+            response = opensearch_manager._make_request('POST', '/smart_search_alias/_search', default_query)
             
             # Log the response status and message
             logger.info(f"OpenSearch response status: {response.get('status')}")
@@ -481,10 +350,19 @@ def save_boosting():
                 logger.error(f"Invalid boosting value for {field}: {value}")
                 return jsonify({"error": f"Invalid boosting value for {field}. Must be between 1 and 10."}), 400
         
-        with open(BOOSTING_VALUES_FILE, 'w') as f:
-            json.dump(boosting_values, f)
+        # Save to OpenSearch index
+        doc_id = "boosting_values"  # Using a fixed document ID
+        response = opensearch_manager._make_request(
+            method='PUT',
+            path=f'/smart_search_boosting/_doc/{doc_id}',
+            data=boosting_values
+        )
         
-        logger.info("Boosting values saved successfully")
+        if response.get('status') == 'error':
+            logger.error(f"Error saving boosting values to OpenSearch: {response.get('message')}")
+            return jsonify({"error": "Failed to save boosting values"}), 500
+        
+        logger.info("Boosting values saved successfully to OpenSearch")
         return jsonify({"message": "Boosting values saved successfully"})
         
     except Exception as e:
@@ -495,21 +373,32 @@ def save_boosting():
 def load_boosting():
     logger.info("Received request to load boosting values")
     try:
-        if os.path.exists(BOOSTING_VALUES_FILE):
-            with open(BOOSTING_VALUES_FILE, 'r') as f:
-                boosting_values = json.load(f)
-            logger.debug(f"Loaded boosting values: {boosting_values}")
+        # Try to get boosting values from OpenSearch
+        doc_id = "boosting_values"
+        response = opensearch_manager._make_request(
+            method='GET',
+            path=f'/smart_search_boosting/_doc/{doc_id}'
+        )
+        
+        if response.get('status') == 'success':
+            boosting_values = response.get('response').json().get('_source', {})
+            logger.debug(f"Loaded boosting values from OpenSearch: {boosting_values}")
             return jsonify(boosting_values)
         else:
-            logger.info("No boosting values file found, returning defaults")
+            logger.info("No boosting values found in OpenSearch, returning defaults")
             default_values = {
-                'memberId': 1.0,
-                'firstName': 1.0,
-                'lastName': 1.0,
-                'memberStatus': 1.0,
-                'state': 1.0,
-                'fatherName': 1.0,
-                'email1': 1.0
+                'memberId': 1,
+                'firstName': 1,
+                'lastName': 1,
+                'memberStatus': 1,
+                'state': 1,
+                'fatherName': 1,
+                'email1': 1,
+                'fullName': 1,
+                'employer_name': 1,
+                'group_policy_number': 1,
+                'policy_status': 1,
+                'industry': 1
             }
             return jsonify(default_values)
             
@@ -519,34 +408,48 @@ def load_boosting():
 
 def load_boosting_values():
     try:
-        if os.path.exists(BOOSTING_VALUES_FILE):
-            with open(BOOSTING_VALUES_FILE, 'r') as f:
-                values = json.load(f)
-            logger.debug(f"Loaded boosting values: {values}")
+        # Try to get boosting values from OpenSearch
+        doc_id = "boosting_values"
+        response = opensearch_manager._make_request(
+            method='GET',
+            path=f'/smart_search_boosting/_doc/{doc_id}'
+        )
+        
+        if response.get('status') == 'success':
+            values = response.get('response').json().get('_source', {})
+            logger.debug(f"Loaded boosting values from OpenSearch: {values}")
             return values
         else:
-            logger.info("No boosting values file found, returning defaults")
+            logger.info("No boosting values found in OpenSearch, returning defaults")
             return {
-                'memberId': 1.0,
-                'firstName': 1.0,
-                'lastName': 1.0,
-                'memberStatus': 1.0,
-                'state': 1.0,
-                'fatherName': 1.0,
-                'email1': 1.0,
-                'fullName': 1.0
+                'memberId': 1,
+                'firstName': 1,
+                'lastName': 1,
+                'memberStatus': 1,
+                'state': 1,
+                'fatherName': 1,
+                'email1': 1,
+                'fullName': 1,
+                'employer_name': 1,
+                'group_policy_number': 1,
+                'policy_status': 1,
+                'industry': 1
             }
     except Exception as e:
-        logger.error(f"Error loading boosting values: {str(e)}", exc_info=True)
+        logger.error(f"Error loading boosting values: {str(e)}")
         return {
-            'memberId': 1.0,
-            'firstName': 1.0,
-            'lastName': 1.0,
-            'memberStatus': 1.0,
-            'state': 1.0,
-            'fatherName': 1.0,
-            'email1': 1.0,
-            'fullName': 1.0
+            'memberId': 1,
+            'firstName': 1,
+            'lastName': 1,
+            'memberStatus': 1,
+            'state': 1,
+            'fatherName': 1,
+            'email1': 1,
+            'fullName': 1,
+            'employer_name': 1,
+            'group_policy_number': 1,
+            'policy_status': 1,
+            'industry': 1
         }
 
 @app.route('/api/combined-autocomplete')
@@ -559,28 +462,6 @@ def combined_autocomplete():
         return jsonify([])
     
     try:
-        # Check OpenSearch connection first
-        try:
-            health_check = opensearch_manager._make_request('GET', '/_cluster/health')
-            logger.info(f"Health check response: {health_check}")
-            if health_check['status'] == 'error':
-                logger.error(f"OpenSearch health check failed: {health_check['message']}")
-                return jsonify({"error": "OpenSearch service is not responding. Please try again later."}), 503
-            logger.debug(f"OpenSearch health check successful: {health_check['response'].json()}")
-        except Exception as e:
-            logger.error(f"Failed to connect to OpenSearch: {str(e)}", exc_info=True)
-            return jsonify({"error": "Cannot connect to OpenSearch service. Please check the connection."}), 503
-
-        # Verify index exists
-        try:
-            if not opensearch_manager._verify_index_exists('member_search_alias'):
-                logger.error("Index 'member_search_alias' does not exist or is not accessible")
-                return jsonify({"error": "Search index is not available. Please contact support."}), 404
-            logger.debug("Index verification successful")
-        except Exception as e:
-            logger.error(f"Index verification failed: {str(e)}", exc_info=True)
-            return jsonify({"error": "Error verifying search index. Please contact support."}), 500
-        
         # Load boosting values
         boosting_values = load_boosting_values()
         logger.info(f"Using boosting values: {boosting_values}")
@@ -589,47 +470,44 @@ def combined_autocomplete():
         autocomplete_query = {
             "query": {
                 "multi_match": {
-                    "query": f"*{query}*",
-                    "type": "best_fields",
+                    "query": query,
+                    "type": "bool_prefix",
                     "fields": [
-                        # Member fields
-                        f"fullName^{boosting_values.get('fullName', 10)}",
-                        f"firstName^{boosting_values.get('firstName', 9)}",
-                        f"lastName^{boosting_values.get('lastName', 8)}",
+                        f"firstName.suggest^{boosting_values.get('firstName', 9)}",
+                        f"lastName.suggest^{boosting_values.get('lastName', 8)}",
                         f"memberId^{boosting_values.get('memberId', 10)}",
-                        f"fatherName^{boosting_values.get('fatherName', 2)}",
-                        f"email1^{boosting_values.get('email1', 2)}",
-                        f"email2^{boosting_values.get('email2', 2)}",
+                        f"fatherName.suggest^{boosting_values.get('fatherName', 2)}",
+                        f"email1.suggest^{boosting_values.get('email1', 1)}",
+                        f"email2.suggest^{boosting_values.get('email2', 2)}",
                         f"phoneNumber1^{boosting_values.get('phoneNumber1', 1)}",
                         f"phoneNumber2^{boosting_values.get('phoneNumber2', 1)}",
-                        f"addressLine1^{boosting_values.get('addressLine1', 1)}",
-                        f"addressLine2^{boosting_values.get('addressLine2', 1)}",
-                        f"city^{boosting_values.get('city', 1)}",
-                        f"state^{boosting_values.get('state', 1)}",
-                        f"zipcode^{boosting_values.get('zipcode', 1)}",
-                        f"country^{boosting_values.get('country', 1)}",
+                        f"addressLine1.suggest^{boosting_values.get('addressLine1', 1)}",
+                        f"addressLine2.suggest^{boosting_values.get('addressLine2', 1)}",
+                        f"city.suggest^{boosting_values.get('city', 1)}",
+                        f"state.suggest^{boosting_values.get('state', 1)}",
+                        f"zipcode.suggest^{boosting_values.get('zipcode', 1)}",
+                        f"country.suggest^{boosting_values.get('country', 1)}",
+                        f"policyNumber^{boosting_values.get('policyNumber', 2)}",
                         f"memberStatus^{boosting_values.get('memberStatus', 1)}",
-                        # Policy fields
-                        f"employer_id^{boosting_values.get('employer_id', 10)}",
-                        f"employer_name^{boosting_values.get('employer_name', 8)}",
+                        f"employer_name.suggest^{boosting_values.get('employer_name', 8)}",
                         f"group_policy_number^{boosting_values.get('group_policy_number', 10)}",
                         f"policy_status^{boosting_values.get('policy_status', 2)}",
-                        f"product_type^{boosting_values.get('product_type', 2)}",
-                        f"broker_name^{boosting_values.get('broker_name', 2)}",
                         f"industry^{boosting_values.get('industry', 1)}"
-                    ]
+                    ],
+                    "operator": "or"
                 }
             },
             "size": 10
         }
+
         
         # Execute the query
         response = opensearch_manager._make_request(
             'POST',
-            '/member_search_alias/_search',
+            '/smart_search_alias/_search',
             data=autocomplete_query
         )
-        
+        logger.info(f"Combined autocomplete query: {autocomplete_query}")
         if response['status'] == 'error':
             logger.error(f"Error in combined search: {response['message']}")
             return jsonify({"error": f"Search error: {response['message']}"}), 500

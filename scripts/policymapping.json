@@ -1,6 +1,22 @@
+POST /_aliases
+{
+  "actions": [
+    {
+      "add": {
+        "index": "employer",
+        "alias": "smart_search_alias"
+      }
+    }
+  ]
+}
+
+
 PUT /employer_policy
 {
-  "mappings": {
+  "aliases": {
+    "smart_search_alias": {}
+    },
+    "mappings": {
     "properties": {
       "employer_id": {
         "type": "keyword"
@@ -8,11 +24,28 @@ PUT /employer_policy
       "employer_name": {
         "type": "text",
         "fields": {
-          "raw": { "type": "keyword" }
+          "raw": {
+            "type": "keyword"
+          },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
         }
       },
       "industry": {
-        "type": "keyword"
+        "type": "text",
+        "fields": {
+          "raw": {
+            "type": "keyword"
+          },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
+        }
       },
       "group_policy_number": {
         "type": "keyword"
@@ -36,7 +69,14 @@ PUT /employer_policy
           "class_description": {
             "type": "text",
             "fields": {
-              "raw": { "type": "keyword" }
+              "raw": {
+                "type": "keyword"
+              },
+              "suggest": {
+                "type": "search_as_you_type",
+                "doc_values": false,
+                "max_shingle_size": 3
+              }
             }
           },
           "coverage_amount": { "type": "double" },
@@ -47,7 +87,14 @@ PUT /employer_policy
       "broker_name": {
         "type": "text",
         "fields": {
-          "raw": { "type": "keyword" }
+          "raw": {
+            "type": "keyword"
+          },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
         }
       },
       "created_at": {

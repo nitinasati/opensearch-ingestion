@@ -1,0 +1,262 @@
+PUT /member
+{
+  "aliases": {
+    "smart_search_alias": {}
+  },
+  "mappings": {
+    "properties": {
+      "addressLine1": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
+        }
+      },
+      "addressLine2": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
+        }
+      },
+      "city": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
+        }
+      },
+      "country": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
+        }
+      },
+      "coverageEndDate": {
+        "type": "date",
+        "format": "yyyy-MM-dd"
+      },
+      "coverageStartDate": {
+        "type": "date",
+        "format": "yyyy-MM-dd"
+      },
+      "createdAt": {
+        "type": "date",
+        "format": "strict_date_time||uuuu-MM-dd'T'HH:mm:ss.SSSSSS"
+      },
+      "dateOfBirth": {
+        "type": "date",
+        "format": "yyyy-MM-dd"
+      },
+      "email1": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
+        }
+      },
+      "email2": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
+        }
+      },
+      "employmentStatus": {
+        "type": "keyword"
+      },
+      "fatherName": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
+        }
+      },
+      "firstName": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
+        }
+      },
+      "gender": {
+        "type": "keyword"
+      },
+      "groupId": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
+        }
+      },
+      "id": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256
+          }
+        }
+      },
+      "lastName": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
+        }
+      },
+      "maritalStatus": {
+        "type": "keyword"
+      },
+      "memberId": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" }
+        }
+      },
+      "memberStatus": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" }
+        }
+      },
+      "middleName": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
+        }
+      },
+      "motherName": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
+        }
+      },
+      "objectId": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
+        }
+      },
+      "objectName": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
+        }
+      },
+      "phoneNumber1": {
+        "type": "keyword"
+      },
+      "phoneNumber2": {
+        "type": "keyword"
+      },
+      "policyNumber": {
+        "type": "keyword"
+      },
+      "preferredLanguage": {
+        "type": "keyword"
+      },
+      "state": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
+        }
+      },
+      "subjectId": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
+        }
+      },
+      "subjectName": {
+        "type": "text",
+        "fields": {
+          "raw": { "type": "keyword" },
+          "suggest": {
+            "type": "search_as_you_type",
+            "doc_values": false,
+            "max_shingle_size": 3
+          }
+        }
+      },
+      "updatedAt": {
+        "type": "date",
+        "format": "strict_date_time||uuuu-MM-dd'T'HH:mm:ss.SSSSSS"
+      },
+      "zipcode": {
+        "type": "keyword"
+      }
+    }
+  }
+}

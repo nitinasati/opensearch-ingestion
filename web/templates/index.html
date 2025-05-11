@@ -249,41 +249,62 @@
             
             <div id="boosting-tab">
                 <div class="boosting-container">
-                    <div class="boosting-field">
-                        <label for="memberId-boost">Member ID</label>
-                        <input type="number" id="memberId-boost" min="1" max="10" step="0.1" value="1">
-                    </div>
-                    <div class="boosting-field">
-                        <label for="firstName-boost">First Name</label>
-                        <input type="number" id="firstName-boost" min="1" max="10" step="0.1" value="1">
-                    </div>
-                    <div class="boosting-field">
-                        <label for="lastName-boost">Last Name</label>
-                        <input type="number" id="lastName-boost" min="1" max="10" step="0.1" value="1">
-                    </div>
-                    <div class="boosting-field">
-                        <label for="memberStatus-boost">Member Status</label>
-                        <input type="number" id="memberStatus-boost" min="1" max="10" step="0.1" value="1">
-                    </div>
-                    <div class="boosting-field">
-                        <label for="state-boost">State</label>
-                        <input type="number" id="state-boost" min="1" max="10" step="0.1" value="1">
-                    </div>
-                    <div class="boosting-field">
-                        <label for="fatherName-boost">Father's Name</label>
-                        <input type="number" id="fatherName-boost" min="1" max="10" step="0.1" value="1">
-                    </div>
-                    <div class="boosting-field">
-                        <label for="email1-boost">Email</label>
-                        <input type="number" id="email1-boost" min="1" max="10" step="0.1" value="1">
-                    </div>
-                    <div class="boosting-controls">
-                        <div class="field-boost">
-                            <label for="fullName-boost">Full Name:</label>
-                            <input type="number" id="fullName-boost" min="1" max="10" value="1" step="0.1">
-                            <span class="boost-value">1.0</span>
+                    <h3>Member Boosting Values</h3>
+                    <div class="boosting-section">
+                        <div class="boosting-field">
+                            <label for="memberId-boost">Member ID</label>
+                            <input type="number" id="memberId-boost" min="1" max="10" step="0.1" value="1">
+                        </div>
+                        <div class="boosting-field">
+                            <label for="firstName-boost">First Name</label>
+                            <input type="number" id="firstName-boost" min="1" max="10" step="0.1" value="1">
+                        </div>
+                        <div class="boosting-field">
+                            <label for="lastName-boost">Last Name</label>
+                            <input type="number" id="lastName-boost" min="1" max="10" step="0.1" value="1">
+                        </div>
+                        <div class="boosting-field">
+                            <label for="memberStatus-boost">Member Status</label>
+                            <input type="number" id="memberStatus-boost" min="1" max="10" step="0.1" value="1">
+                        </div>
+                        <div class="boosting-field">
+                            <label for="state-boost">State</label>
+                            <input type="number" id="state-boost" min="1" max="10" step="0.1" value="1">
+                        </div>
+                        <div class="boosting-field">
+                            <label for="fatherName-boost">Father's Name</label>
+                            <input type="number" id="fatherName-boost" min="1" max="10" step="0.1" value="1">
+                        </div>
+                        <div class="boosting-field">
+                            <label for="email1-boost">Email</label>
+                            <input type="number" id="email1-boost" min="1" max="10" step="0.1" value="1">
+                        </div>
+                        <div class="boosting-field">
+                            <label for="fullName-boost">Full Name</label>
+                            <input type="number" id="fullName-boost" min="1" max="10" step="0.1" value="1">
                         </div>
                     </div>
+
+                    <h3>Employer Boosting Values</h3>
+                    <div class="boosting-section">
+                        <div class="boosting-field">
+                            <label for="employer_name-boost">Employer Name</label>
+                            <input type="number" id="employer_name-boost" min="1" max="10" step="0.1" value="1">
+                        </div>
+                        <div class="boosting-field">
+                            <label for="group_policy_number-boost">Group Policy Number</label>
+                            <input type="number" id="group_policy_number-boost" min="1" max="10" step="0.1" value="1">
+                        </div>
+                        <div class="boosting-field">
+                            <label for="policy_status-boost">Policy Status</label>
+                            <input type="number" id="policy_status-boost" min="1" max="10" step="0.1" value="1">
+                        </div>
+                        <div class="boosting-field">
+                            <label for="industry-boost">Industry</label>
+                            <input type="number" id="industry-boost" min="1" max="10" step="0.1" value="1">
+                        </div>
+                    </div>
+
                     <div class="boosting-actions">
                         <button id="save-boosting-btn">Save Boosting Values</button>
                     </div>
@@ -395,6 +416,7 @@
                     $('#lastName').val(ui.item.lastName);
                     $('#memberStatus').val(ui.item.memberStatus);
                     $('#state').val(ui.item.state);
+                    $('#fatherName').val(ui.item.fatherName);
                     return false;
                 }
             }).data("ui-autocomplete")._renderItem = function(ul, item) {
@@ -462,7 +484,12 @@
                     state: parseFloat($('#state-boost').val()),
                     fatherName: parseFloat($('#fatherName-boost').val()),
                     email1: parseFloat($('#email1-boost').val()),
-                    fullName: parseFloat($('#fullName-boost').val())
+                    fullName: parseFloat($('#fullName-boost').val()),
+                    // Add employer-related boosting values
+                    employer_name: parseFloat($('#employer_name-boost').val()),
+                    group_policy_number: parseFloat($('#group_policy_number-boost').val()),
+                    policy_status: parseFloat($('#policy_status-boost').val()),
+                    industry: parseFloat($('#industry-boost').val())
                 };
 
                 $.ajax({

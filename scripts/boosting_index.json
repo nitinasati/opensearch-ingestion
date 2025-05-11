@@ -1,0 +1,19 @@
+PUT /smart_search_boosting
+{
+  "mappings": {
+    "properties": {
+      "memberId":             { "type": "integer" },
+      "firstName":           { "type": "integer" },
+      "lastName":            { "type": "integer" },
+      "memberStatus":        { "type": "integer" },
+      "state":               { "type": "integer" },
+      "fatherName":          { "type": "integer" },
+      "email1":              { "type": "integer" },
+      "fullName":            { "type": "integer" },
+      "employer_name":       { "type": "integer" },
+      "group_policy_number": { "type": "integer" },
+      "policy_status":       { "type": "integer" },
+      "industry":            { "type": "integer" }
+    }
+  }
+}
