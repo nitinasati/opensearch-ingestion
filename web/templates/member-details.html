@@ -103,6 +103,15 @@
             Member Details
         </h1>
 
+        <!-- Member Summary Section -->
+        <div id="member-summary-section" style="margin-bottom: 20px; display: none;">
+            <h2>Summary</h2>
+            <div id="member-summary-loading" style="font-style: italic; color: #888;">
+                <i class="fas fa-spinner fa-spin"></i> Generating member summary...
+            </div>
+            <div id="member-summary" style="font-style: italic; color: #333; display: none;"></div>
+        </div>
+
         <div class="member-header">
             <div class="info-group">
                 <h3>Basic Information</h3>
@@ -231,43 +240,58 @@
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script>
         $(document).ready(function() {
-            // Get member data from URL parameters
             const urlParams = new URLSearchParams(window.location.search);
-            const memberData = JSON.parse(decodeURIComponent(urlParams.get('data')));
+            const memberId = urlParams.get('memberId');
+            if (!memberId) {
+                alert('No memberId provided!');
+                return;
+            }
 
-            // Populate basic information
-            $('#member-id').text(memberData.memberId);
-            $('#full-name').text(`${memberData.firstName} ${memberData.lastName}`);
-            
-            // Add status badge
-            const statusClass = memberData.memberStatus === 'Active' ? 'status-active' : 'status-inactive';
-            $('#member-status').html(`<span class="status-badge ${statusClass}">${memberData.memberStatus}</span>`);
+            // Fetch and display member details (should run immediately)
+            $.getJSON(`/api/member/${memberId}`, function(memberData) {
+                // Populate fields
+                $('#member-id').text(memberData.memberId);
+                $('#full-name').text(`${memberData.firstName} ${memberData.lastName}`);
+                const statusClass = memberData.memberStatus === 'Active' ? 'status-active' : 'status-inactive';
+                $('#member-status').html(`<span class="status-badge ${statusClass}">${memberData.memberStatus}</span>`);
+                $('#father-name').text(memberData.fatherName);
+                $('#date-of-birth').text(formatDate(memberData.dateOfBirth));
+                $('#gender').text(memberData.gender);
+                $('#marital-status').text(memberData.maritalStatus);
+                $('#email1').text(memberData.email1);
+                $('#email2').text(memberData.email2 || 'N/A');
+                $('#phone1').text(memberData.phoneNumber1);
+                $('#phone2').text(memberData.phoneNumber2 || 'N/A');
+                $('#address-line1').text(memberData.addressLine1);
+                $('#address-line2').text(memberData.addressLine2 || 'N/A');
+                $('#city').text(memberData.city);
+                $('#state').text(memberData.state);
+                $('#zipcode').text(memberData.zipcode);
+                $('#country').text(memberData.country);
+                $('#group-id').text(memberData.groupId);
+                $('#policy-number').text(memberData.policyNumber);
+                $('#created-at').text(formatDate(memberData.created_at));
+                $('#updated-at').text(formatDate(memberData.updated_at));
+            }).fail(function(jqXHR) {
+                alert('Failed to load member details: ' + (jqXHR.responseJSON?.error || 'Unknown error'));
+            });
 
-            // Populate personal information
-            $('#father-name').text(memberData.fatherName);
-            $('#date-of-birth').text(formatDate(memberData.dateOfBirth));
-            $('#gender').text(memberData.gender);
-            $('#marital-status').text(memberData.maritalStatus);
-
-            // Populate contact information
-            $('#email1').text(memberData.email1);
-            $('#email2').text(memberData.email2 || 'N/A');
-            $('#phone1').text(memberData.phoneNumber1);
-            $('#phone2').text(memberData.phoneNumber2 || 'N/A');
-
-            // Populate address information
-            $('#address-line1').text(memberData.addressLine1);
-            $('#address-line2').text(memberData.addressLine2 || 'N/A');
-            $('#city').text(memberData.city);
-            $('#state').text(memberData.state);
-            $('#zipcode').text(memberData.zipcode);
-            $('#country').text(memberData.country);
-
-            // Populate policy information
-            $('#group-id').text(memberData.groupId);
-            $('#policy-number').text(memberData.policyNumber);
-            $('#created-at').text(formatDate(memberData.created_at));
-            $('#updated-at').text(formatDate(memberData.updated_at));
+            // Fetch and display member summary (should run in parallel)
+            $('#member-summary-section').show();
+            $('#member-summary-loading').show();
+            $('#member-summary').hide();
+            $.ajax({
+                url: `/api/member-summary/${memberId}`,
+                method: 'GET',
+                success: function(data) {
+                    $('#member-summary').text(data.summary);
+                    $('#member-summary-loading').hide();
+                    $('#member-summary').show();
+                },
+                error: function(xhr) {
+                    $('#member-summary-section').hide(); // Hide the section if error
+                }
+            });
         });
 
         function formatDate(dateString) {

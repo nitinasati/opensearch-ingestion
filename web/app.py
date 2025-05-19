@@ -8,6 +8,8 @@ import json
 import time
 import requests
 from opensearchpy.exceptions import OpenSearchException
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 
 # Add the parent directory to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -618,6 +620,132 @@ def plan():
 def member_details():
     """Render the member details page."""
     return render_template('member-details.html')
+
+def fetch_member_by_id(member_id):
+    query = {
+        "query": {
+            "term": {
+                "memberId": member_id
+            }
+        },
+        "size": 1
+    }
+    response = opensearch_manager._make_request(
+        method='POST',
+        path='/member/_search',
+        data=query
+    )
+    if response.get('status') == 'error':
+        raise Exception(response.get('message'))
+    hits = response.get('response').json().get('hits', {}).get('hits', [])
+    if not hits:
+        return None
+    return hits[0]['_source']
+
+@app.route('/api/member/<member_id>', methods=['GET'])
+def get_member_by_id(member_id):
+    try:
+        member_data = fetch_member_by_id(member_id)
+        if not member_data:
+            return jsonify({"error": "Member not found"}), 404
+        return jsonify(member_data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/member-summary/<member_id>', methods=['GET'])
+def get_member_summary(member_id):
+    try:
+        logger.info(f"Fetching member summary for member_id: {member_id}")
+        member_data = fetch_member_by_id(member_id)
+        logger.info(f"Member data: {member_data}")
+        if not member_data:
+            return jsonify({"error": "Member not found"}), 404
+
+        # Only include the most relevant fields for summarization
+        fields_to_include = [
+            "memberId", "firstName", "lastName", "dateOfBirth", "gender", "maritalStatus",
+            "employmentStatus", "memberStatus", "policyNumber", "coverageStartDate", "coverageEndDate",
+            "groupId", "addressLine1", "city", "state", "country", "email1", "phoneNumber1"
+        ]
+        filtered_data = {k: v for k, v in member_data.items() if k in fields_to_include}
+
+        # Format the prompt according to Claude's requirements
+        system_prompt = (
+            """
+                    You are a helpful assistant that summarizes member profiles in a professional tone.
+
+                    Instructions:
+
+                    If the member's Date of Birth is within the next 30 days or occurred in the past 7 days from current date which is 18th May 2025, start the summary with a bolded alert in this format:
+                    **Upcoming Birthday Alert: [Member Name]'s birthday is on [Month Day], [Birthday falls in X days / was X days ago].**
+
+                    Follow the alert with a brief, formal message summarizing the member's profile, covering:
+
+                    Full Name, Residence (City, State, Country)
+                    Gender, Marital Status, Employment Status
+                    Date of Birth
+                    Contact Info (Phone, Email)
+                    Policy Information: Policy Number, Coverage Start & End Dates, Status
+
+                    Maintain a professional and business-friendly tone.
+
+                    Use clear headings such as Basic Information, Personal Information, Contact Information, Address, Policy Details.
+
+                    If any field is missing, state "N/A" instead of omitting it.
+                    """
+        )
+        prompt = (
+            f"Member Data in JSON:\n{json.dumps(filtered_data, indent=2)}\n\n"
+            "Please provide a concise summary of this member's profile."
+        )
+
+        logger.info("Starting summary generation with prompt length: %d", len(prompt))
+
+        # Prepare the request body for Claude 3 Messages API
+        request_body = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 512,
+            "temperature": 0.7,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": system_prompt + "\n\n" + prompt
+                        }
+                    ]
+                }
+            ]
+        }
+
+        bedrock = boto3.client("bedrock-runtime")
+        response = bedrock.invoke_model_with_response_stream(
+            body=json.dumps(request_body).encode('utf-8'),
+            modelId="anthropic.claude-3-sonnet-20240229-v1:0"
+        )
+
+        # Process the streaming response and concatenate all text
+        full_response = ""
+        for event in response['body']:
+            if 'chunk' in event:
+                chunk_data = event['chunk']['bytes']
+                chunk_json = json.loads(chunk_data.decode('utf-8'))
+                if 'delta' in chunk_json and 'text' in chunk_json['delta']:
+                    full_response += chunk_json['delta']['text']
+
+        if not full_response:
+            return jsonify({'error': 'No response from model'}), 500
+
+        # Return the summary as plain text
+        return jsonify({'summary': full_response})
+
+    except (BotoCoreError, ClientError) as aws_err:
+        logger.error(f"AWS error in get_member_summary: {str(aws_err)}", exc_info=True)
+        return jsonify({"error": str(aws_err)}), 500
+    except Exception as e:
+        logger.error(f"Error in get_member_summary: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     # Use threaded=False to avoid the threading issue

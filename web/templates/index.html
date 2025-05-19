@@ -614,9 +614,8 @@
                         const policyData = encodeURIComponent(JSON.stringify(ui.item));
                         window.location.href = `/plan?data=${policyData}`;
                     } else if (ui.item.type === 'member') {
-                        // For member items, navigate to the member details page
-                        const memberData = encodeURIComponent(JSON.stringify(ui.item));
-                        window.location.href = `/member-details?data=${memberData}`;
+                        // For member items, navigate to the member details page with only memberId
+                        window.location.href = `/member-details?memberId=${ui.item.memberId}`;
                     }
                     return false;
                 }
